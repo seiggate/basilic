@@ -1,0 +1,24 @@
+
+---
+
+## ⚙️ '.gitignore'
+```gitignore
+# Python
+__pycache__/
+*.pyc
+.env
+venv/
+
+# Qt / C++
+build/
+*.pro.user
+*.obj
+*.o
+*.exe
+
+# SQLite
+*.db
+
+# Node
+node_modules/
+.env
