@@ -23,6 +23,8 @@ from PySide6.QtWidgets import (
     QListWidget,
     QTabWidget,
     QGridLayout,
+    QScrollArea,
+    QMessageBox,
 )
 
 # chemin vers la DB
@@ -45,6 +47,9 @@ class MainWindow(QMainWindow):
         # setup
         self._setup_library_tab()
         self._setup_booster_tab()
+        self._setup_simulate_tab()
+
+        self.draft_state = None
 
     # ---------------------- BIBLIOTHÈQUE ----------------------
     def _setup_library_tab(self):
@@ -448,6 +453,201 @@ class MainWindow(QMainWindow):
         except Exception:
             conn.close()
         return None
+
+    # ---------------------- SIMULATION ----------------------
+    def _setup_simulate_tab(self):
+        simulate_widget = QWidget()
+        main_layout = QHBoxLayout(simulate_widget)
+
+        left_panel = QWidget()
+        left_layout = QVBoxLayout(left_panel)
+
+        self.btn_start_draft = QPushButton("Démarrer un Draft (8 joueurs)")
+        self.btn_start_draft.clicked.connect(self.start_draft)
+
+        self.draft_info_label = QLabel("Aucun draft en cours")
+        self.draft_info_label.setStyleSheet("font-size: 14px; font-weight: bold; padding: 10px;")
+
+        self.current_pack_area = QScrollArea()
+        self.current_pack_area.setWidgetResizable(True)
+        self.current_pack_widget = QWidget()
+        self.current_pack_layout = QGridLayout(self.current_pack_widget)
+        self.current_pack_layout.setSpacing(8)
+        self.current_pack_area.setWidget(self.current_pack_widget)
+
+        left_layout.addWidget(self.btn_start_draft)
+        left_layout.addWidget(self.draft_info_label)
+        left_layout.addWidget(QLabel("Booster actuel:"))
+        left_layout.addWidget(self.current_pack_area)
+
+        right_panel = QWidget()
+        right_layout = QVBoxLayout(right_panel)
+
+        right_layout.addWidget(QLabel("Vos picks:"))
+        self.picked_cards_list = QListWidget()
+        self.picked_cards_list.setStyleSheet("font-size: 13px;")
+        right_layout.addWidget(self.picked_cards_list)
+
+        main_layout.addWidget(left_panel, stretch=2)
+        main_layout.addWidget(right_panel, stretch=1)
+
+        self.tabs.addTab(simulate_widget, "Simulation")
+
+    def start_draft(self):
+        self.draft_state = {
+            'round': 1,
+            'pick': 1,
+            'packs': [],
+            'picked_cards': [],
+            'ai_picks': [[] for _ in range(7)]
+        }
+
+        for player_idx in range(8):
+            pack = self._generate_draft_pack()
+            self.draft_state['packs'].append(pack)
+
+        self.btn_start_draft.setEnabled(False)
+        self.update_draft_display()
+
+    def _generate_draft_pack(self):
+        commons_raw = self.fetch_cards("WHERE rarity='common'")
+        uncommons_raw = self.fetch_cards("WHERE rarity='uncommon'")
+        rares_raw = self.fetch_cards("WHERE rarity='rare'")
+        mythics_raw = self.fetch_cards("WHERE rarity='mythic'")
+
+        commons_simple = [(n, r) for (n, r, m, ci) in commons_raw]
+        uncommons_simple = [(n, r) for (n, r, m, ci) in uncommons_raw]
+        rares_simple = [(n, r) for (n, r, m, ci) in rares_raw]
+        mythics_simple = [(n, r) for (n, r, m, ci) in mythics_raw]
+
+        pack = []
+
+        for _ in range(10):
+            pack.append(self._pick_random(commons_simple))
+
+        for _ in range(3):
+            pack.append(self._pick_random(uncommons_simple))
+
+        if random.random() < 0.125:
+            pack.append(self._pick_random(mythics_simple))
+        else:
+            pack.append(self._pick_random(rares_simple))
+
+        random.shuffle(pack)
+        return pack
+
+    def update_draft_display(self):
+        if not self.draft_state:
+            return
+
+        round_num = self.draft_state['round']
+        pick_num = self.draft_state['pick']
+        total_picks = len(self.draft_state['picked_cards'])
+
+        self.draft_info_label.setText(
+            f"Ronde {round_num} - Pick {pick_num} (Total picks: {total_picks})"
+        )
+
+        while self.current_pack_layout.count():
+            item = self.current_pack_layout.takeAt(0)
+            widget = item.widget()
+            if widget:
+                widget.deleteLater()
+
+        current_pack = self.draft_state['packs'][0]
+        if not current_pack:
+            self.advance_to_next_pack()
+            return
+
+        cols = 3
+        for idx, (name, rarity) in enumerate(current_pack):
+            r = idx // cols
+            c = idx % cols
+
+            card_widget = QWidget()
+            card_layout = QVBoxLayout(card_widget)
+            card_layout.setContentsMargins(2, 2, 2, 2)
+            card_layout.setSpacing(4)
+
+            thumb = QLabel()
+            thumb.setFixedSize(140, 100)
+            thumb.setAlignment(Qt.AlignCenter)
+            thumb.setStyleSheet("border: 1px solid #999; background: #fff;")
+
+            url = self._get_image_url_for_name(name)
+            if url:
+                pix = self._get_cached_pixmap(url)
+                if pix:
+                    scaled = pix.scaled(140, 100, Qt.KeepAspectRatio, Qt.SmoothTransformation)
+                    thumb.setPixmap(scaled)
+                else:
+                    thumb.setText("Impossible\nà charger")
+            else:
+                thumb.setText("Pas d'image")
+
+            label = QLabel(f"{name}\n[{rarity}]")
+            label.setAlignment(Qt.AlignCenter)
+            label.setFixedWidth(140)
+            label.setWordWrap(True)
+
+            pick_btn = QPushButton("Choisir")
+            pick_btn.setFixedWidth(140)
+            pick_btn.clicked.connect(lambda checked, card=(name, rarity): self.pick_card(card))
+
+            card_layout.addWidget(thumb)
+            card_layout.addWidget(label)
+            card_layout.addWidget(pick_btn)
+
+            self.current_pack_layout.addWidget(card_widget, r, c)
+
+    def pick_card(self, card):
+        if not self.draft_state:
+            return
+
+        name, rarity = card
+        self.draft_state['picked_cards'].append(card)
+
+        self.picked_cards_list.addItem(f"{name} [{rarity}]")
+
+        current_pack = self.draft_state['packs'][0]
+        current_pack.remove(card)
+
+        self.ai_make_picks()
+
+        self.draft_state['pick'] += 1
+
+        if self.draft_state['round'] % 2 == 1:
+            self.draft_state['packs'] = self.draft_state['packs'][1:] + [self.draft_state['packs'][0]]
+        else:
+            self.draft_state['packs'] = [self.draft_state['packs'][-1]] + self.draft_state['packs'][:-1]
+
+        self.update_draft_display()
+
+    def ai_make_picks(self):
+        for i in range(1, 8):
+            pack = self.draft_state['packs'][i]
+            if pack:
+                picked = random.choice(pack)
+                self.draft_state['ai_picks'][i-1].append(picked)
+                pack.remove(picked)
+
+    def advance_to_next_pack(self):
+        if self.draft_state['round'] >= 3:
+            QMessageBox.information(self, "Draft terminé",
+                                    f"Le draft est terminé!\n\nVous avez pick {len(self.draft_state['picked_cards'])} cartes.")
+            self.btn_start_draft.setEnabled(True)
+            self.draft_state = None
+            self.draft_info_label.setText("Draft terminé")
+            return
+
+        self.draft_state['round'] += 1
+        self.draft_state['pick'] = 1
+
+        for player_idx in range(8):
+            pack = self._generate_draft_pack()
+            self.draft_state['packs'][player_idx] = pack
+
+        self.update_draft_display()
 
 
 # execution directe pour test
