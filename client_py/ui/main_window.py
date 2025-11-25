@@ -25,6 +25,7 @@ from PySide6.QtWidgets import (
     QGridLayout,
     QScrollArea,
     QMessageBox,
+    QDialog,
 )
 
 # chemin vers la DB
@@ -559,46 +560,149 @@ class MainWindow(QMainWindow):
             self.advance_to_next_pack()
             return
 
-        cols = 3
+        cols = 4
         for idx, (name, rarity) in enumerate(current_pack):
             r = idx // cols
             c = idx % cols
 
-            card_widget = QWidget()
-            card_layout = QVBoxLayout(card_widget)
-            card_layout.setContentsMargins(2, 2, 2, 2)
-            card_layout.setSpacing(4)
+            card_block = self._create_card_block(name, rarity)
+            self.current_pack_layout.addWidget(card_block, r, c)
 
-            thumb = QLabel()
-            thumb.setFixedSize(140, 100)
-            thumb.setAlignment(Qt.AlignCenter)
-            thumb.setStyleSheet("border: 1px solid #999; background: #fff;")
+    def _create_card_block(self, name, rarity):
+        block = QWidget()
+        block.setFixedSize(160, 280)
+        block.setStyleSheet("""
+            QWidget {
+                background: white;
+                border: 2px solid #ddd;
+                border-radius: 8px;
+            }
+        """)
 
-            url = self._get_image_url_for_name(name)
-            if url:
-                pix = self._get_cached_pixmap(url)
-                if pix:
-                    scaled = pix.scaled(140, 100, Qt.KeepAspectRatio, Qt.SmoothTransformation)
-                    thumb.setPixmap(scaled)
-                else:
-                    thumb.setText("Impossible\nà charger")
-            else:
-                thumb.setText("Pas d'image")
+        layout = QVBoxLayout(block)
+        layout.setContentsMargins(10, 10, 10, 10)
+        layout.setSpacing(8)
 
-            label = QLabel(f"{name}\n[{rarity}]")
-            label.setAlignment(Qt.AlignCenter)
-            label.setFixedWidth(140)
-            label.setWordWrap(True)
+        name_label = QLabel(name)
+        name_label.setAlignment(Qt.AlignCenter)
+        name_label.setWordWrap(True)
+        name_label.setStyleSheet("""
+            font-weight: bold;
+            font-size: 12px;
+            color: #333;
+        """)
+        name_label.setFixedHeight(30)
 
-            pick_btn = QPushButton("Choisir")
-            pick_btn.setFixedWidth(140)
-            pick_btn.clicked.connect(lambda checked, card=(name, rarity): self.pick_card(card))
+        image_label = QLabel()
+        image_label.setFixedSize(140, 100)
+        image_label.setAlignment(Qt.AlignCenter)
+        image_label.setStyleSheet("background: #f5f5f5; border: 1px solid #ccc; border-radius: 4px;")
 
-            card_layout.addWidget(thumb)
-            card_layout.addWidget(label)
-            card_layout.addWidget(pick_btn)
+        url = self._get_image_url_for_name(name)
+        if url:
+            pix = self._get_cached_pixmap(url)
+            if pix:
+                scaled = pix.scaled(140, 100, Qt.KeepAspectRatio, Qt.SmoothTransformation)
+                image_label.setPixmap(scaled)
 
-            self.current_pack_layout.addWidget(card_widget, r, c)
+        button_container = QWidget()
+        button_layout = QHBoxLayout(button_container)
+        button_layout.setContentsMargins(0, 0, 0, 0)
+        button_layout.setSpacing(4)
+
+        pick_btn = QPushButton("Choisir")
+        pick_btn.setStyleSheet("""
+            QPushButton {
+                background: #4CAF50;
+                color: white;
+                border: none;
+                border-radius: 4px;
+                font-weight: bold;
+                font-size: 11px;
+                padding: 4px;
+            }
+            QPushButton:hover {
+                background: #45a049;
+            }
+        """)
+        pick_btn.clicked.connect(lambda: self.pick_card((name, rarity)))
+
+        view_btn = QPushButton("Voir")
+        view_btn.setStyleSheet("""
+            QPushButton {
+                background: #2196F3;
+                color: white;
+                border: none;
+                border-radius: 4px;
+                font-weight: bold;
+                font-size: 11px;
+                padding: 4px;
+            }
+            QPushButton:hover {
+                background: #0b7dda;
+            }
+        """)
+        view_btn.clicked.connect(lambda: self._show_card_detail(name, rarity))
+
+        button_layout.addWidget(pick_btn)
+        button_layout.addWidget(view_btn)
+
+        layout.addWidget(name_label)
+        layout.addWidget(image_label)
+        layout.addWidget(button_container)
+        layout.addStretch()
+
+        return block
+
+    def _show_card_detail(self, name, rarity):
+        dialog = QDialog(self)
+        dialog.setWindowTitle(name)
+        dialog.setFixedSize(400, 600)
+
+        layout = QVBoxLayout(dialog)
+
+        title = QLabel(name)
+        title.setAlignment(Qt.AlignCenter)
+        title.setStyleSheet("font-weight: bold; font-size: 16px; color: #333;")
+
+        image_label = QLabel()
+        image_label.setAlignment(Qt.AlignCenter)
+        image_label.setStyleSheet("background: #f5f5f5; border: 1px solid #ccc; border-radius: 4px;")
+
+        url = self._get_image_url_for_name(name)
+        if url:
+            pix = self._get_cached_pixmap(url)
+            if pix:
+                scaled = pix.scaled(350, 500, Qt.KeepAspectRatio, Qt.SmoothTransformation)
+                image_label.setPixmap(scaled)
+
+        rarity_label = QLabel(f"Rareté: {rarity}")
+        rarity_label.setAlignment(Qt.AlignCenter)
+        rarity_label.setStyleSheet("font-size: 12px; color: #666;")
+
+        close_btn = QPushButton("Fermer")
+        close_btn.clicked.connect(dialog.accept)
+        close_btn.setStyleSheet("""
+            QPushButton {
+                background: #f44336;
+                color: white;
+                border: none;
+                border-radius: 4px;
+                font-weight: bold;
+                padding: 8px;
+            }
+            QPushButton:hover {
+                background: #da190b;
+            }
+        """)
+
+        layout.addWidget(title)
+        layout.addWidget(image_label)
+        layout.addWidget(rarity_label)
+        layout.addStretch()
+        layout.addWidget(close_btn)
+
+        dialog.exec()
 
     def pick_card(self, card):
         if not self.draft_state:
