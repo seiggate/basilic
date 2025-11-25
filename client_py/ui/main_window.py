@@ -495,6 +495,8 @@ class MainWindow(QMainWindow):
         self.tabs.addTab(simulate_widget, "Simulation")
 
     def start_draft(self):
+        self.picked_cards_list.clear()
+
         self.draft_state = {
             'round': 1,
             'pick': 1,
