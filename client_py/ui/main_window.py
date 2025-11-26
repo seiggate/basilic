@@ -10,8 +10,8 @@ from pathlib import Path
 from threading import Thread
 
 import requests
-from PySide6.QtCore import Qt
-from PySide6.QtGui import QPixmap
+from PySide6.QtCore import Qt, QTimer
+from PySide6.QtGui import QPixmap, QPainter, QColor, QFont
 from PySide6.QtWidgets import (
     QApplication,
     QMainWindow,
@@ -32,7 +32,76 @@ from PySide6.QtWidgets import (
     QDialog,
     QLineEdit,
     QInputDialog,
+    QSpinBox,
+    QFormLayout,
 )
+
+from core.supabase_client import get_supabase_client
+
+
+class RoundTableWidget(QWidget):
+    """Widget showing a round table with player seats"""
+    def __init__(self):
+        super().__init__()
+        self.players = []
+        self.max_players = 8
+        self.setMinimumSize(500, 500)
+        self.setStyleSheet("background: white; border: 1px solid #ddd; border-radius: 8px;")
+
+    def set_players(self, players, max_players):
+        self.players = players
+        self.max_players = max_players
+        self.update()
+
+    def paintEvent(self, event):
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.Antialiasing)
+
+        width = self.width()
+        height = self.height()
+        center_x = width // 2
+        center_y = height // 2
+
+        table_radius = min(width, height) // 3
+        painter.setBrush(QColor("#8B4513"))
+        painter.setPen(QColor("#654321"))
+        painter.drawEllipse(center_x - table_radius, center_y - table_radius, table_radius * 2, table_radius * 2)
+
+        seat_radius = min(width, height) // 2 - 60
+        occupied_seats = {p['seat_position']: p for p in self.players}
+
+        import math
+        for i in range(self.max_players):
+            angle = (i / self.max_players) * 2 * math.pi - math.pi / 2
+            x = center_x + int(seat_radius * math.cos(angle))
+            y = center_y + int(seat_radius * math.sin(angle))
+
+            if i in occupied_seats:
+                player = occupied_seats[i]
+                painter.setBrush(QColor("#4CAF50"))
+                painter.setPen(QColor("#2E7D32"))
+                painter.drawEllipse(x - 30, y - 30, 60, 60)
+
+                painter.setPen(QColor("white"))
+                font = QFont("Arial", 10, QFont.Bold)
+                painter.setFont(font)
+                name = player['player_name'][:10]
+                text_rect = painter.boundingRect(x - 30, y - 10, 60, 20, Qt.AlignCenter, name)
+                painter.drawText(text_rect, Qt.AlignCenter, name)
+
+                if player.get('is_creator'):
+                    painter.setPen(QColor("#FFD700"))
+                    painter.drawText(x - 30, y + 25, 60, 15, Qt.AlignCenter, "HOST")
+            else:
+                painter.setBrush(QColor("#E0E0E0"))
+                painter.setPen(QColor("#BDBDBD"))
+                painter.drawEllipse(x - 30, y - 30, 60, 60)
+
+                painter.setPen(QColor("#757575"))
+                font = QFont("Arial", 9)
+                painter.setFont(font)
+                painter.drawText(x - 30, y - 5, 60, 20, Qt.AlignCenter, f"Si\u00e8ge {i+1}")
+
 
 # chemin vers la DB
 DB_PATH = Path(__file__).parent.parent / "database" / "basilic.db"
@@ -59,6 +128,12 @@ class MainWindow(QMainWindow):
 
         self.draft_state = None
         self.lobby_state = None
+        self.current_lobby_id = None
+        self.current_player_id = None
+        self.supabase = get_supabase_client()
+        self.lobby_refresh_timer = QTimer()
+        self.lobby_refresh_timer.timeout.connect(self.refresh_lobbies)
+        self.lobby_refresh_timer.start(3000)
 
     # ---------------------- BIBLIOTHÈQUE ----------------------
     def _setup_library_tab(self):
@@ -767,22 +842,18 @@ class MainWindow(QMainWindow):
     def _setup_lobby_tab(self):
         lobby_widget = QWidget()
         main_layout = QVBoxLayout(lobby_widget)
-        main_layout.setSpacing(20)
-        main_layout.setContentsMargins(40, 40, 40, 40)
+        main_layout.setSpacing(15)
+        main_layout.setContentsMargins(20, 20, 20, 20)
 
-        title = QLabel("Lobby LAN")
-        title.setStyleSheet("font-size: 18px; font-weight: bold; color: #333;")
+        title = QLabel("Lobbies de Draft")
+        title.setStyleSheet("font-size: 20px; font-weight: bold; color: #333;")
         main_layout.addWidget(title)
 
-        self.lobby_status_label = QLabel("Aucun lobby actif")
-        self.lobby_status_label.setStyleSheet("font-size: 14px; color: #666; padding: 10px;")
-        main_layout.addWidget(self.lobby_status_label)
-
         button_layout = QHBoxLayout()
-        button_layout.setSpacing(15)
+        button_layout.setSpacing(10)
 
         create_btn = QPushButton("Créer un Lobby")
-        create_btn.setFixedSize(200, 50)
+        create_btn.setFixedSize(180, 45)
         create_btn.setStyleSheet("""
             QPushButton {
                 background: #4CAF50;
@@ -795,15 +866,12 @@ class MainWindow(QMainWindow):
             QPushButton:hover {
                 background: #45a049;
             }
-            QPushButton:pressed {
-                background: #3d8b40;
-            }
         """)
-        create_btn.clicked.connect(self.create_lobby)
+        create_btn.clicked.connect(self.show_create_lobby_dialog)
 
-        join_btn = QPushButton("Rejoindre un Lobby")
-        join_btn.setFixedSize(200, 50)
-        join_btn.setStyleSheet("""
+        refresh_btn = QPushButton("Rafraîchir")
+        refresh_btn.setFixedSize(120, 45)
+        refresh_btn.setStyleSheet("""
             QPushButton {
                 background: #2196F3;
                 color: white;
@@ -815,187 +883,318 @@ class MainWindow(QMainWindow):
             QPushButton:hover {
                 background: #0b7dda;
             }
-            QPushButton:pressed {
-                background: #0956cc;
-            }
         """)
-        join_btn.clicked.connect(self.join_lobby)
+        refresh_btn.clicked.connect(self.refresh_lobbies)
 
         button_layout.addWidget(create_btn)
-        button_layout.addWidget(join_btn)
+        button_layout.addWidget(refresh_btn)
         button_layout.addStretch()
 
         main_layout.addLayout(button_layout)
 
-        self.lobby_info = QLabel("")
-        self.lobby_info.setStyleSheet("""
-            font-size: 12px;
-            color: #333;
-            padding: 15px;
-            background: #f5f5f5;
-            border-radius: 6px;
-            min-height: 100px;
+        self.lobby_list_widget = QListWidget()
+        self.lobby_list_widget.setStyleSheet("""
+            QListWidget {
+                background: white;
+                border: 1px solid #ddd;
+                border-radius: 6px;
+                font-size: 13px;
+            }
+            QListWidget::item {
+                padding: 8px;
+                border-bottom: 1px solid #eee;
+            }
+            QListWidget::item:hover {
+                background: #f0f0f0;
+            }
+            QListWidget::item:selected {
+                background: #e3f2fd;
+                color: #333;
+            }
         """)
-        self.lobby_info.setWordWrap(True)
-        main_layout.addWidget(self.lobby_info)
+        self.lobby_list_widget.itemDoubleClicked.connect(self.join_selected_lobby)
+        main_layout.addWidget(self.lobby_list_widget)
 
-        main_layout.addStretch()
+        self.lobby_detail_widget = QWidget()
+        self.lobby_detail_layout = QVBoxLayout(self.lobby_detail_widget)
+        self.lobby_detail_layout.setContentsMargins(0, 10, 0, 0)
+
+        self.round_table_widget = RoundTableWidget()
+        self.lobby_detail_layout.addWidget(self.round_table_widget)
+
+        self.btn_leave_lobby = QPushButton("Quitter le lobby")
+        self.btn_leave_lobby.setStyleSheet("""
+            QPushButton {
+                background: #f44336;
+                color: white;
+                border: none;
+                border-radius: 6px;
+                font-weight: bold;
+                padding: 10px;
+            }
+            QPushButton:hover {
+                background: #da190b;
+            }
+        """)
+        self.btn_leave_lobby.clicked.connect(self.leave_lobby)
+        self.btn_leave_lobby.hide()
+
+        self.btn_start_game = QPushButton("Lancer la partie")
+        self.btn_start_game.setStyleSheet("""
+            QPushButton {
+                background: #FF9800;
+                color: white;
+                border: none;
+                border-radius: 6px;
+                font-weight: bold;
+                padding: 12px;
+                font-size: 14px;
+            }
+            QPushButton:hover {
+                background: #F57C00;
+            }
+        """)
+        self.btn_start_game.clicked.connect(self.start_game)
+        self.btn_start_game.hide()
+
+        self.lobby_detail_layout.addWidget(self.btn_leave_lobby)
+        self.lobby_detail_layout.addWidget(self.btn_start_game)
+        self.lobby_detail_widget.hide()
+
+        main_layout.addWidget(self.lobby_detail_widget)
 
         self.tabs.addTab(lobby_widget, "Lobby")
+        self.refresh_lobbies()
 
-    def create_lobby(self):
-        code = ''.join(random.choices(string.ascii_uppercase + string.digits, k=5))
-        self.lobby_state = {
-            'code': code,
-            'role': 'host',
-            'players': [self._get_hostname()],
-            'port': 9999
-        }
+    def show_create_lobby_dialog(self):
+        if not self.supabase:
+            QMessageBox.warning(self, "Erreur", "Supabase non configuré")
+            return
 
-        self.lobby_status_label.setText(f"Code du lobby: {code}")
-        info_text = f"""
-Lobby créé avec succès!
+        dialog = QDialog(self)
+        dialog.setWindowTitle("Créer un lobby")
+        dialog.setFixedSize(400, 300)
 
-Code: {code}
-Rôle: Hôte
-Port: {self.lobby_state['port']}
+        layout = QFormLayout(dialog)
 
-Adresse IP locale: {self._get_local_ip()}
+        player_name_input = QLineEdit()
+        player_name_input.setPlaceholderText("Votre nom (max 20 caractères)")
+        player_name_input.setMaxLength(20)
+        player_name_input.setText("Anonymous")
 
-En attente de joueurs...
-        """
-        self.lobby_info.setText(info_text)
+        lobby_name_input = QLineEdit()
+        lobby_name_input.setPlaceholderText("Nom du lobby")
+        lobby_name_input.setMaxLength(30)
 
-        Thread(target=self._start_server, daemon=True).start()
+        max_players_spin = QSpinBox()
+        max_players_spin.setMinimum(4)
+        max_players_spin.setMaximum(8)
+        max_players_spin.setValue(8)
 
-    def join_lobby(self):
-        code, ok = QInputDialog.getText(self, "Rejoindre un Lobby", "Entrez le code du lobby:")
-        if ok and code:
-            code = code.upper().strip()
-            if len(code) == 5:
-                try:
-                    ip, ok2 = QInputDialog.getText(self, "Adresse IP",
-                                                    "Entrez l'adresse IP de l'hôte:")
-                    if ok2 and ip:
-                        self.lobby_state = {
-                            'code': code,
-                            'role': 'client',
-                            'host_ip': ip,
-                            'port': 9999,
-                            'player_name': self._get_hostname()
-                        }
+        layout.addRow("Votre nom:", player_name_input)
+        layout.addRow("Nom du lobby:", lobby_name_input)
+        layout.addRow("Nombre de joueurs:", max_players_spin)
 
-                        Thread(target=self._connect_to_server, daemon=True).start()
+        button_box = QHBoxLayout()
+        create_btn = QPushButton("Créer")
+        cancel_btn = QPushButton("Annuler")
 
-                        info_text = f"""
-Tentative de connexion...
-
-Code: {code}
-Adresse IP: {ip}
-Rôle: Client
-
-En attente de confirmation...
-                        """
-                        self.lobby_info.setText(info_text)
-                        self.lobby_status_label.setText(f"Connexion au lobby: {code}")
-                except Exception as e:
-                    QMessageBox.critical(self, "Erreur", f"Erreur de connexion: {str(e)}")
-            else:
-                QMessageBox.warning(self, "Code invalide", "Le code doit contenir 5 caractères")
-
-    def _start_server(self):
-        try:
-            server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-            server_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-            server_socket.bind(('', self.lobby_state['port']))
-            server_socket.listen(7)
-
-            while self.lobby_state and self.lobby_state.get('role') == 'host':
-                try:
-                    client_socket, address = server_socket.accept()
-                    data = client_socket.recv(1024).decode('utf-8')
-                    client_data = json.loads(data)
-
-                    if client_data.get('code') == self.lobby_state['code']:
-                        player_name = client_data.get('player_name', 'Joueur inconnu')
-                        self.lobby_state['players'].append(player_name)
-
-                        response = {'status': 'ok', 'players': self.lobby_state['players']}
-                        client_socket.send(json.dumps(response).encode('utf-8'))
-
-                        info_text = f"""
-Lobby actif!
-
-Code: {self.lobby_state['code']}
-Joueurs ({len(self.lobby_state['players'])}):
-{chr(10).join(f"  • {p}" for p in self.lobby_state['players'])}
-
-Port: {self.lobby_state['port']}
-                        """
-                        self.lobby_info.setText(info_text)
-                    else:
-                        response = {'status': 'invalid_code'}
-                        client_socket.send(json.dumps(response).encode('utf-8'))
-
-                    client_socket.close()
-                except Exception as e:
-                    pass
-
-            server_socket.close()
-        except Exception as e:
-            QMessageBox.critical(self, "Erreur Serveur", f"Erreur serveur: {str(e)}")
-
-    def _connect_to_server(self):
-        try:
-            client_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-            client_socket.connect((self.lobby_state['host_ip'], self.lobby_state['port']))
-
-            data = {
-                'code': self.lobby_state['code'],
-                'player_name': self.lobby_state['player_name']
+        create_btn.setStyleSheet("""
+            QPushButton {
+                background: #4CAF50;
+                color: white;
+                border: none;
+                border-radius: 4px;
+                padding: 8px 20px;
+                font-weight: bold;
             }
-            client_socket.send(json.dumps(data).encode('utf-8'))
+            QPushButton:hover {
+                background: #45a049;
+            }
+        """)
+        cancel_btn.clicked.connect(dialog.reject)
 
-            response = client_socket.recv(1024).decode('utf-8')
-            response_data = json.loads(response)
+        def create():
+            player_name = player_name_input.text().strip() or "Anonymous"
+            lobby_name = lobby_name_input.text().strip() or "Partie de Draft"
+            max_players = max_players_spin.value()
+            self.create_lobby(player_name, lobby_name, max_players)
+            dialog.accept()
 
-            if response_data.get('status') == 'ok':
-                players = response_data.get('players', [])
-                info_text = f"""
-Connecté au lobby!
+        create_btn.clicked.connect(create)
+        button_box.addWidget(cancel_btn)
+        button_box.addWidget(create_btn)
+        layout.addRow(button_box)
 
-Code: {self.lobby_state['code']}
-Joueurs ({len(players)}):
-{chr(10).join(f"  • {p}" for p in players)}
+        dialog.exec()
 
-Adresse hôte: {self.lobby_state['host_ip']}
-                """
-                self.lobby_info.setText(info_text)
-                self.lobby_status_label.setText("Connecté au lobby")
-            else:
-                QMessageBox.warning(self, "Connexion échouée", "Code invalide ou lobby plein")
-                self.lobby_state = None
+    def create_lobby(self, player_name, lobby_name, max_players):
+        if not self.supabase:
+            return
 
-            client_socket.close()
+        try:
+            code = ''.join(random.choices(string.ascii_uppercase + string.digits, k=5))
+
+            lobby_data = {
+                'name': lobby_name,
+                'code': code,
+                'creator_name': player_name,
+                'max_players': max_players,
+                'status': 'waiting'
+            }
+            result = self.supabase.table('lobbies').insert(lobby_data).execute()
+            lobby = result.data[0]
+
+            player_data = {
+                'lobby_id': lobby['id'],
+                'player_name': player_name,
+                'seat_position': 0,
+                'is_creator': True
+            }
+            player_result = self.supabase.table('lobby_players').insert(player_data).execute()
+
+            self.current_lobby_id = lobby['id']
+            self.current_player_id = player_result.data[0]['id']
+
+            QMessageBox.information(self, "Lobby créé", f"Lobby créé avec le code: {code}")
+            self.refresh_lobbies()
+            self.show_lobby_detail(lobby['id'])
+
         except Exception as e:
-            QMessageBox.critical(self, "Erreur Connexion", f"Impossible de se connecter: {str(e)}")
-            self.lobby_state = None
+            QMessageBox.critical(self, "Erreur", f"Erreur lors de la création: {str(e)}")
 
-    def _get_local_ip(self):
-        try:
-            s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-            s.connect(("8.8.8.8", 80))
-            ip = s.getsockname()[0]
-            s.close()
-            return ip
-        except:
-            return "127.0.0.1"
+    def refresh_lobbies(self):
+        if not self.supabase:
+            return
 
-    def _get_hostname(self):
         try:
-            return socket.gethostname()
-        except:
-            return "Joueur"
+            result = self.supabase.table('lobbies').select('*, lobby_players(count)').eq('status', 'waiting').execute()
+            lobbies = result.data
+
+            self.lobby_list_widget.clear()
+            for lobby in lobbies:
+                player_count = len(lobby.get('lobby_players', []))
+                item_text = f"{lobby['name']} | Code: {lobby['code']} | Joueurs: {player_count}/{lobby['max_players']}"
+                self.lobby_list_widget.addItem(item_text)
+                item = self.lobby_list_widget.item(self.lobby_list_widget.count() - 1)
+                item.setData(Qt.UserRole, lobby['id'])
+
+        except Exception as e:
+            print(f"Erreur rafraîchissement: {e}")
+
+    def join_selected_lobby(self, item):
+        if self.current_lobby_id:
+            QMessageBox.warning(self, "Attention", "Vous êtes déjà dans un lobby")
+            return
+
+        lobby_id = item.data(Qt.UserRole)
+
+        player_name, ok = QInputDialog.getText(self, "Votre nom", "Entrez votre nom (max 20 caractères):")
+        if not ok:
+            return
+
+        player_name = player_name.strip()[:20] or "Anonymous"
+
+        self.join_lobby(lobby_id, player_name)
+
+    def join_lobby(self, lobby_id, player_name):
+        if not self.supabase:
+            return
+
+        try:
+            lobby_result = self.supabase.table('lobbies').select('*, lobby_players(*)').eq('id', lobby_id).single().execute()
+            lobby = lobby_result.data
+
+            current_players = lobby.get('lobby_players', [])
+            if len(current_players) >= lobby['max_players']:
+                QMessageBox.warning(self, "Lobby plein", "Ce lobby est complet")
+                return
+
+            occupied_seats = [p['seat_position'] for p in current_players]
+            available_seat = next(i for i in range(lobby['max_players']) if i not in occupied_seats)
+
+            player_data = {
+                'lobby_id': lobby_id,
+                'player_name': player_name,
+                'seat_position': available_seat,
+                'is_creator': False
+            }
+            player_result = self.supabase.table('lobby_players').insert(player_data).execute()
+
+            self.current_lobby_id = lobby_id
+            self.current_player_id = player_result.data[0]['id']
+
+            self.show_lobby_detail(lobby_id)
+
+        except Exception as e:
+            QMessageBox.critical(self, "Erreur", f"Erreur lors de la connexion: {str(e)}")
+
+    def show_lobby_detail(self, lobby_id):
+        self.lobby_detail_widget.show()
+        self.btn_leave_lobby.show()
+        self.update_lobby_detail()
+
+        if not hasattr(self, 'lobby_detail_timer'):
+            self.lobby_detail_timer = QTimer()
+            self.lobby_detail_timer.timeout.connect(self.update_lobby_detail)
+            self.lobby_detail_timer.start(2000)
+
+    def update_lobby_detail(self):
+        if not self.current_lobby_id or not self.supabase:
+            return
+
+        try:
+            result = self.supabase.table('lobbies').select('*, lobby_players(*)').eq('id', self.current_lobby_id).single().execute()
+            lobby = result.data
+
+            players = lobby.get('lobby_players', [])
+            self.round_table_widget.set_players(players, lobby['max_players'])
+
+            is_creator = any(p['id'] == self.current_player_id and p['is_creator'] for p in players)
+            if is_creator and len(players) == lobby['max_players']:
+                self.btn_start_game.show()
+            else:
+                self.btn_start_game.hide()
+
+        except Exception as e:
+            print(f"Erreur mise à jour lobby: {e}")
+
+    def leave_lobby(self):
+        if not self.current_player_id or not self.supabase:
+            return
+
+        try:
+            self.supabase.table('lobby_players').delete().eq('id', self.current_player_id).execute()
+
+            result = self.supabase.table('lobby_players').select('*').eq('lobby_id', self.current_lobby_id).execute()
+            if not result.data:
+                self.supabase.table('lobbies').delete().eq('id', self.current_lobby_id).execute()
+
+            self.current_lobby_id = None
+            self.current_player_id = None
+            self.lobby_detail_widget.hide()
+            self.btn_leave_lobby.hide()
+            self.btn_start_game.hide()
+
+            if hasattr(self, 'lobby_detail_timer'):
+                self.lobby_detail_timer.stop()
+
+            self.refresh_lobbies()
+            QMessageBox.information(self, "Lobby quitté", "Vous avez quitté le lobby")
+
+        except Exception as e:
+            QMessageBox.critical(self, "Erreur", f"Erreur en quittant: {str(e)}")
+
+    def start_game(self):
+        if not self.current_lobby_id or not self.supabase:
+            return
+
+        try:
+            self.supabase.table('lobbies').update({'status': 'in_progress'}).eq('id', self.current_lobby_id).execute()
+            QMessageBox.information(self, "Partie lancée", "La partie a été lancée!")
+            self.btn_start_game.hide()
+        except Exception as e:
+            QMessageBox.critical(self, "Erreur", f"Erreur au lancement: {str(e)}")
 
 
 # execution directe pour test
