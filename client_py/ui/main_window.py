@@ -120,12 +120,7 @@ class MainWindow(QMainWindow):
         self.tabs = QTabWidget()
         self.setCentralWidget(self.tabs)
 
-        # setup
-        self._setup_library_tab()
-        self._setup_booster_tab()
-        self._setup_simulate_tab()
-        self._setup_lobby_tab()
-
+        # Initialize Supabase and state BEFORE setting up tabs
         self.draft_state = None
         self.lobby_state = None
         self.current_lobby_id = None
@@ -134,6 +129,12 @@ class MainWindow(QMainWindow):
         self.lobby_refresh_timer = QTimer()
         self.lobby_refresh_timer.timeout.connect(self.refresh_lobbies)
         self.lobby_refresh_timer.start(3000)
+
+        # setup tabs AFTER Supabase initialization
+        self._setup_library_tab()
+        self._setup_booster_tab()
+        self._setup_simulate_tab()
+        self._setup_lobby_tab()
 
     # ---------------------- BIBLIOTHÈQUE ----------------------
     def _setup_library_tab(self):
