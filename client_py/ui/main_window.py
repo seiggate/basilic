@@ -130,6 +130,10 @@ class MainWindow(QMainWindow):
         self.lobby_refresh_timer.timeout.connect(self.refresh_lobbies)
         self.lobby_refresh_timer.start(3000)
 
+        self.cleanup_timer = QTimer()
+        self.cleanup_timer.timeout.connect(self.cleanup_abandoned_lobbies)
+        self.cleanup_timer.start(300000)
+
         # setup tabs AFTER Supabase initialization
         self._setup_library_tab()
         self._setup_booster_tab()
@@ -1165,10 +1169,18 @@ class MainWindow(QMainWindow):
             return
 
         try:
+            is_creator = False
+            try:
+                player_result = self.supabase.table('lobby_players').select('is_creator').eq('id', self.current_player_id).single().execute()
+                is_creator = player_result.data.get('is_creator', False)
+            except:
+                pass
+
             self.supabase.table('lobby_players').delete().eq('id', self.current_player_id).execute()
 
             result = self.supabase.table('lobby_players').select('*').eq('lobby_id', self.current_lobby_id).execute()
-            if not result.data:
+            if not result.data or is_creator:
+                self.supabase.table('lobby_players').delete().eq('lobby_id', self.current_lobby_id).execute()
                 self.supabase.table('lobbies').delete().eq('id', self.current_lobby_id).execute()
 
             self.current_lobby_id = None
@@ -1196,6 +1208,16 @@ class MainWindow(QMainWindow):
             self.btn_start_game.hide()
         except Exception as e:
             QMessageBox.critical(self, "Erreur", f"Erreur au lancement: {str(e)}")
+
+    def cleanup_abandoned_lobbies(self):
+        if not self.supabase:
+            return
+
+        try:
+            self.supabase.rpc('cleanup_abandoned_lobbies').execute()
+            print("Nettoyage des lobbies abandonnés effectué")
+        except Exception as e:
+            print(f"Erreur nettoyage: {e}")
 
 
 # execution directe pour test
