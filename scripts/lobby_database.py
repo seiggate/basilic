@@ -6,11 +6,30 @@ This creates the lobbies and lobby_players tables with proper RLS policies.
 import os
 import sys
 from pathlib import Path
+from dotenv import load_dotenv
 
-# Add parent directory to path to import supabase_client
-sys.path.insert(0, str(Path(__file__).parent.parent / "client_py"))
+# Load environment variables
+env_path = Path(__file__).parent.parent / ".env"
+load_dotenv(dotenv_path=env_path)
 
-from core.supabase_client import get_supabase_client
+# Import supabase directly
+try:
+    from supabase import create_client, Client
+except ImportError:
+    print("Error: supabase package not installed.")
+    print("Please run: pip install supabase")
+    sys.exit(1)
+
+
+def get_supabase_client():
+    """Get a Supabase client instance"""
+    SUPABASE_URL = os.environ.get("SUPABASE_URL", "")
+    SUPABASE_KEY = os.environ.get("SUPABASE_ANON_KEY", "")
+
+    if not SUPABASE_URL or not SUPABASE_KEY:
+        return None
+
+    return create_client(SUPABASE_URL, SUPABASE_KEY)
 
 
 def create_lobby_tables():
