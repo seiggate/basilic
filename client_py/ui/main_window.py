@@ -2,7 +2,6 @@
 import os
 import sys
 import random
-import sqlite3
 import string
 import socket
 import json
@@ -362,15 +361,38 @@ class MainWindow(QMainWindow):
     # -------------------- génération du play booster --------------------
     def generate_booster(self):
         """Génère un Play Booster selon la spécification donnée."""
-        # charge pools (rows have: name, rarity, mana_cost, color_identity_or_empty)
-        commons_raw = self.fetch_cards("WHERE rarity='common'")
-        uncommons_raw = self.fetch_cards("WHERE rarity='uncommon'")
-        rares_raw = self.fetch_cards("WHERE rarity='rare'")
-        mythics_raw = self.fetch_cards("WHERE rarity='mythic'")
-        basics_raw = self.fetch_cards("WHERE type_line LIKE '%Basic Land%'")
+        # Récupère toutes les cartes depuis Supabase
+        try:
+            supabase = get_supabase_client()
+            if not supabase:
+                QMessageBox.warning(self, "Erreur", "Supabase non configuré")
+                return
 
-        # the_list attempt (adjust if you have a specific way to identify it)
-        the_list_raw = self.fetch_cards("WHERE set_code='SLD' OR set_code='LIST'")
+            # Récupère toutes les cartes avec set_code par défaut (blb)
+            all_cards_response = supabase.table("cards").select("name, rarity, mana_cost, colors, type_line, set_code").eq("set_code", "blb").execute()
+            all_cards = all_cards_response.data
+
+            if not all_cards:
+                QMessageBox.warning(self, "Erreur", "Aucune carte trouvée")
+                return
+
+            # Filtre par rareté
+            commons_raw = [(c['name'], c['rarity'], c.get('mana_cost', ''), ','.join(c.get('colors', [])))
+                          for c in all_cards if c['rarity'] == 'common']
+            uncommons_raw = [(c['name'], c['rarity'], c.get('mana_cost', ''), ','.join(c.get('colors', [])))
+                            for c in all_cards if c['rarity'] == 'uncommon']
+            rares_raw = [(c['name'], c['rarity'], c.get('mana_cost', ''), ','.join(c.get('colors', [])))
+                        for c in all_cards if c['rarity'] == 'rare']
+            mythics_raw = [(c['name'], c['rarity'], c.get('mana_cost', ''), ','.join(c.get('colors', [])))
+                          for c in all_cards if c['rarity'] == 'mythic']
+            basics_raw = [(c['name'], c['rarity'], c.get('mana_cost', ''), ','.join(c.get('colors', [])))
+                         for c in all_cards if 'Basic Land' in c.get('type_line', '')]
+
+            # The List (pour l'instant vide, peut être ajouté plus tard)
+            the_list_raw = []
+        except Exception as e:
+            QMessageBox.critical(self, "Erreur", f"Erreur lors du chargement des cartes: {e}")
+            return
 
         # Pools (name, rarity) for easy picks when color not needed
         commons_simple = [(n, r) for (n, r, m, ci) in commons_raw]
@@ -598,31 +620,42 @@ class MainWindow(QMainWindow):
         self.update_draft_display()
 
     def _generate_draft_pack(self):
-        commons_raw = self.fetch_cards("WHERE rarity='common'")
-        uncommons_raw = self.fetch_cards("WHERE rarity='uncommon'")
-        rares_raw = self.fetch_cards("WHERE rarity='rare'")
-        mythics_raw = self.fetch_cards("WHERE rarity='mythic'")
+        """Génère un booster de draft depuis Supabase"""
+        try:
+            supabase = get_supabase_client()
+            if not supabase:
+                return []
 
-        commons_simple = [(n, r) for (n, r, m, ci) in commons_raw]
-        uncommons_simple = [(n, r) for (n, r, m, ci) in uncommons_raw]
-        rares_simple = [(n, r) for (n, r, m, ci) in rares_raw]
-        mythics_simple = [(n, r) for (n, r, m, ci) in mythics_raw]
+            # Récupère toutes les cartes (set par défaut: blb)
+            all_cards = supabase.table("cards").select("name, rarity, mana_cost, colors").eq("set_code", "blb").execute()
 
-        pack = []
+            if not all_cards.data:
+                return []
 
-        for _ in range(10):
-            pack.append(self._pick_random(commons_simple))
+            # Filtre par rareté
+            commons_simple = [(c['name'], c['rarity']) for c in all_cards.data if c['rarity'] == 'common']
+            uncommons_simple = [(c['name'], c['rarity']) for c in all_cards.data if c['rarity'] == 'uncommon']
+            rares_simple = [(c['name'], c['rarity']) for c in all_cards.data if c['rarity'] == 'rare']
+            mythics_simple = [(c['name'], c['rarity']) for c in all_cards.data if c['rarity'] == 'mythic']
 
-        for _ in range(3):
-            pack.append(self._pick_random(uncommons_simple))
+            pack = []
 
-        if random.random() < 0.125:
-            pack.append(self._pick_random(mythics_simple))
-        else:
-            pack.append(self._pick_random(rares_simple))
+            for _ in range(10):
+                pack.append(self._pick_random(commons_simple))
 
-        random.shuffle(pack)
-        return pack
+            for _ in range(3):
+                pack.append(self._pick_random(uncommons_simple))
+
+            if random.random() < 0.125:
+                pack.append(self._pick_random(mythics_simple))
+            else:
+                pack.append(self._pick_random(rares_simple))
+
+            random.shuffle(pack)
+            return pack
+        except Exception as e:
+            print(f"❌ Erreur _generate_draft_pack: {e}")
+            return []
 
     def _generate_draft_pack_for_set(self, set_code):
         if not self.supabase:
