@@ -1,2 +1,24 @@
+# Python cache
+__pycache__/
+cache_booster/
+*.py[cod]
+*.pyo
+*.pyd
+*.pyc
+
+# C++ build
+build/
+cmake-build-*/
+*.o
+*.exe
+
+# Database
+*.db
+*.sqlite
+
+# IDE
+.vscode/
+.idea/
+
 node_modules/
 .env
