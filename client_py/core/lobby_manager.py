@@ -7,7 +7,7 @@ import random
 import string
 from typing import Optional, List, Dict
 from .supabase_client import get_supabase_client
-from .booster_generator import generate_draft_boosters
+from .draft_manager import DraftManager
 
 
 class LobbyManager:
@@ -221,13 +221,19 @@ class LobbyManager:
         self.supabase.table("lobbies").update({"status": "in_progress"}).eq("id", lobby_id).execute()
 
         set_code = lobby.data["set_code"]
-        draft_boosters = generate_draft_boosters(set_code, player_count)
+
+        draft_manager = DraftManager(None)
+        draft_id = draft_manager.initialize_draft(lobby_id, player_count, set_code)
+
+        if not draft_id:
+            print("❌ Failed to initialize draft")
+            return None
 
         print(f"🎉 Draft started with {player_count} players!")
         return {
             "lobby": lobby.data,
             "players": players,
-            "boosters": draft_boosters
+            "draft_id": draft_id
         }
 
     def leave_lobby(self, lobby_id: str, player_name: str) -> bool:

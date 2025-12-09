@@ -66,13 +66,9 @@ def main():
         print(f"   🎉 Draft started!")
         print(f"   Set: {draft['lobby']['set_code'].upper()}")
         print(f"   Players: {len(draft['players'])}")
-        print(f"   Total boosters: {len(draft['players']) * 3}")
+        print(f"   Draft ID: {draft['draft_id']}")
         print()
-        print("   First booster preview (Player 0):")
-        first_booster = draft['boosters'][0][0]
-        for card in first_booster[:5]:
-            print(f"     - {card['name']} ({card['rarity']})")
-        print(f"     ... and {len(first_booster) - 5} more cards")
+        print("   💡 Use test_complete_draft.py to simulate a full draft")
     else:
         print("   ❌ Failed to start draft")
 
