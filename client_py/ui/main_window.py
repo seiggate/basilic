@@ -125,6 +125,7 @@ class MainWindow(QMainWindow):
         self.lobby_state = None
         self.current_lobby_id = None
         self.current_player_id = None
+        self.available_sets = []
         self.supabase = get_supabase_client()
         self.lobby_refresh_timer = QTimer()
         self.lobby_refresh_timer.timeout.connect(self.refresh_lobbies)
@@ -133,6 +134,9 @@ class MainWindow(QMainWindow):
         self.cleanup_timer = QTimer()
         self.cleanup_timer.timeout.connect(self.cleanup_abandoned_lobbies)
         self.cleanup_timer.start(300000)
+
+        # Load available sets from Supabase
+        self.load_available_sets()
 
         # setup tabs AFTER Supabase initialization
         self._setup_library_tab()
@@ -627,6 +631,42 @@ class MainWindow(QMainWindow):
         random.shuffle(pack)
         return pack
 
+    def _generate_draft_pack_for_set(self, set_code):
+        if not self.supabase:
+            return []
+
+        try:
+            commons = self.supabase.table('cards').select('id, name, rarity').eq('set_code', set_code).eq('rarity', 'common').execute()
+            uncommons = self.supabase.table('cards').select('id, name, rarity').eq('set_code', set_code).eq('rarity', 'uncommon').execute()
+            rares = self.supabase.table('cards').select('id, name, rarity').eq('set_code', set_code).eq('rarity', 'rare').execute()
+            mythics = self.supabase.table('cards').select('id, name, rarity').eq('set_code', set_code).eq('rarity', 'mythic').execute()
+
+            pack_card_ids = []
+
+            for _ in range(10):
+                if commons.data:
+                    card = random.choice(commons.data)
+                    pack_card_ids.append(card['id'])
+
+            for _ in range(3):
+                if uncommons.data:
+                    card = random.choice(uncommons.data)
+                    pack_card_ids.append(card['id'])
+
+            if random.random() < 0.125 and mythics.data:
+                card = random.choice(mythics.data)
+                pack_card_ids.append(card['id'])
+            elif rares.data:
+                card = random.choice(rares.data)
+                pack_card_ids.append(card['id'])
+
+            random.shuffle(pack_card_ids)
+            return pack_card_ids
+
+        except Exception as e:
+            print(f"Erreur génération booster: {e}")
+            return []
+
     def update_draft_display(self):
         if not self.draft_state:
             return
@@ -844,6 +884,17 @@ class MainWindow(QMainWindow):
         self.update_draft_display()
 
     # ---------------------- LOBBY ----------------------
+    def load_available_sets(self):
+        if not self.supabase:
+            return
+
+        try:
+            result = self.supabase.table('sets').select('code, name').order('name').execute()
+            self.available_sets = result.data
+        except Exception as e:
+            print(f"Erreur chargement sets: {e}")
+            self.available_sets = []
+
     def _setup_lobby_tab(self):
         lobby_widget = QWidget()
         main_layout = QVBoxLayout(lobby_widget)
@@ -978,7 +1029,7 @@ class MainWindow(QMainWindow):
 
         dialog = QDialog(self)
         dialog.setWindowTitle("Créer un lobby")
-        dialog.setFixedSize(400, 300)
+        dialog.setFixedSize(400, 350)
 
         layout = QFormLayout(dialog)
 
@@ -996,8 +1047,16 @@ class MainWindow(QMainWindow):
         max_players_spin.setMaximum(8)
         max_players_spin.setValue(8)
 
+        from PySide6.QtWidgets import QComboBox
+        set_combo = QComboBox()
+        for set_info in self.available_sets:
+            set_combo.addItem(f"{set_info['name']} ({set_info['code'].upper()})", set_info['code'])
+        if set_combo.count() == 0:
+            set_combo.addItem("Bloomburrow (BLB)", "blb")
+
         layout.addRow("Votre nom:", player_name_input)
         layout.addRow("Nom du lobby:", lobby_name_input)
+        layout.addRow("Extension:", set_combo)
         layout.addRow("Nombre de joueurs:", max_players_spin)
 
         button_box = QHBoxLayout()
@@ -1023,7 +1082,8 @@ class MainWindow(QMainWindow):
             player_name = player_name_input.text().strip() or "Anonymous"
             lobby_name = lobby_name_input.text().strip() or "Partie de Draft"
             max_players = max_players_spin.value()
-            self.create_lobby(player_name, lobby_name, max_players)
+            set_code = set_combo.currentData() or "blb"
+            self.create_lobby(player_name, lobby_name, max_players, set_code)
             dialog.accept()
 
         create_btn.clicked.connect(create)
@@ -1033,7 +1093,7 @@ class MainWindow(QMainWindow):
 
         dialog.exec()
 
-    def create_lobby(self, player_name, lobby_name, max_players):
+    def create_lobby(self, player_name, lobby_name, max_players, set_code='blb'):
         if not self.supabase:
             return
 
@@ -1045,7 +1105,8 @@ class MainWindow(QMainWindow):
                 'code': code,
                 'creator_name': player_name,
                 'max_players': max_players,
-                'status': 'waiting'
+                'status': 'waiting',
+                'set_code': set_code
             }
             result = self.supabase.table('lobbies').insert(lobby_data).execute()
             lobby = result.data[0]
@@ -1203,9 +1264,49 @@ class MainWindow(QMainWindow):
             return
 
         try:
+            lobby_result = self.supabase.table('lobbies').select('*, lobby_players(*)').eq('id', self.current_lobby_id).single().execute()
+            lobby = lobby_result.data
+            players = lobby.get('lobby_players', [])
+            set_code = lobby.get('set_code', 'blb')
+
+            if len(players) != lobby['max_players']:
+                QMessageBox.warning(self, "Erreur", "Le lobby n'est pas complet")
+                return
+
             self.supabase.table('lobbies').update({'status': 'in_progress'}).eq('id', self.current_lobby_id).execute()
-            QMessageBox.information(self, "Partie lancée", "La partie a été lancée!")
+
+            draft_data = {
+                'lobby_id': self.current_lobby_id,
+                'set_code': set_code,
+                'total_rounds': 3,
+                'current_round': 1,
+                'status': 'active'
+            }
+            draft_result = self.supabase.table('draft_sessions').insert(draft_data).execute()
+            draft_session = draft_result.data[0]
+            draft_session_id = draft_session['id']
+
+            for round_num in range(1, 4):
+                for player in players:
+                    pack_cards = self._generate_draft_pack_for_set(set_code)
+                    pack_data = {
+                        'draft_session_id': draft_session_id,
+                        'player_id': player['id'],
+                        'round_number': round_num,
+                        'cards': pack_cards,
+                        'current_position': player['seat_position']
+                    }
+                    self.supabase.table('draft_packs').insert(pack_data).execute()
+
+            QMessageBox.information(self, "Draft lancé",
+                f"Le draft a été lancé avec l'extension {set_code.upper()}!\n\n"
+                f"Session ID: {draft_session_id}\n"
+                f"Nombre de joueurs: {len(players)}\n"
+                f"Boosters générés: {len(players) * 3}")
             self.btn_start_game.hide()
+
+            self.tabs.setCurrentIndex(2)
+
         except Exception as e:
             QMessageBox.critical(self, "Erreur", f"Erreur au lancement: {str(e)}")
 
