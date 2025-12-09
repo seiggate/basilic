@@ -1,5 +1,6 @@
 # client_py/ui/main_window.py
 import os
+import sys
 import random
 import sqlite3
 import string
@@ -103,11 +104,98 @@ class RoundTableWidget(QWidget):
                 painter.drawText(x - 30, y - 5, 60, 20, Qt.AlignCenter, f"Si\u00e8ge {i+1}")
 
 
-# chemin vers la DB
-DB_PATH = Path(__file__).parent.parent / "database" / "basilic.db"
-# dossier de cache pour images du booster
-CACHE_DIR = Path(__file__).parent.parent / "cache_booster"
+# Détection de l'environnement PyInstaller
+def get_app_data_dir():
+    """Retourne le répertoire de données de l'application"""
+    if getattr(sys, 'frozen', False):
+        # Mode exécutable PyInstaller
+        if os.name == 'nt':  # Windows
+            base = Path(os.environ.get('APPDATA', Path.home() / 'AppData' / 'Roaming'))
+        else:  # Linux/Mac
+            base = Path.home() / '.local' / 'share'
+        return base / 'Basilic'
+    else:
+        # Mode développement
+        return Path(__file__).parent.parent
+
+# Création des répertoires nécessaires
+APP_DATA_DIR = get_app_data_dir()
+APP_DATA_DIR.mkdir(parents=True, exist_ok=True)
+
+# Chemins des fichiers
+DB_PATH = APP_DATA_DIR / "basilic.db"
+CACHE_DIR = APP_DATA_DIR / "cache_booster"
 CACHE_DIR.mkdir(parents=True, exist_ok=True)
+
+
+def init_database():
+    """Initialise la base de données si elle n'existe pas"""
+    if not DB_PATH.exists():
+        conn = sqlite3.connect(DB_PATH)
+        c = conn.cursor()
+
+        # Création des tables nécessaires
+        c.execute("""
+        CREATE TABLE IF NOT EXISTS sets (
+            id TEXT PRIMARY KEY,
+            name TEXT NOT NULL,
+            code TEXT NOT NULL,
+            release_date TEXT
+        )
+        """)
+
+        c.execute("""
+        CREATE TABLE IF NOT EXISTS cards (
+            id TEXT PRIMARY KEY,
+            name TEXT NOT NULL,
+            set_code TEXT NOT NULL,
+            mana_cost TEXT,
+            type_line TEXT,
+            rarity TEXT,
+            oracle_text TEXT,
+            power TEXT,
+            toughness TEXT,
+            image_url TEXT,
+            color_identity TEXT,
+            FOREIGN KEY (set_code) REFERENCES sets(code)
+        )
+        """)
+
+        c.execute("""
+        CREATE TABLE IF NOT EXISTS users (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            username TEXT UNIQUE NOT NULL,
+            password_hash TEXT NOT NULL,
+            created_at TEXT DEFAULT CURRENT_TIMESTAMP
+        )
+        """)
+
+        c.execute("""
+        CREATE TABLE IF NOT EXISTS cubes (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            name TEXT NOT NULL,
+            description TEXT,
+            owner_id INTEGER,
+            FOREIGN KEY (owner_id) REFERENCES users(id)
+        )
+        """)
+
+        c.execute("""
+        CREATE TABLE IF NOT EXISTS cube_cards (
+            cube_id INTEGER,
+            card_id TEXT,
+            FOREIGN KEY (cube_id) REFERENCES cubes(id),
+            FOREIGN KEY (card_id) REFERENCES cards(id)
+        )
+        """)
+
+        conn.commit()
+        conn.close()
+        print(f"✅ Base de données initialisée : {DB_PATH}")
+
+
+# Initialisation de la base de données au démarrage
+init_database()
 
 
 class MainWindow(QMainWindow):
