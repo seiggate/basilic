@@ -128,74 +128,7 @@ CACHE_DIR = APP_DATA_DIR / "cache_booster"
 CACHE_DIR.mkdir(parents=True, exist_ok=True)
 
 
-def init_database():
-    """Initialise la base de données si elle n'existe pas"""
-    if not DB_PATH.exists():
-        conn = sqlite3.connect(DB_PATH)
-        c = conn.cursor()
-
-        # Création des tables nécessaires
-        c.execute("""
-        CREATE TABLE IF NOT EXISTS sets (
-            id TEXT PRIMARY KEY,
-            name TEXT NOT NULL,
-            code TEXT NOT NULL,
-            release_date TEXT
-        )
-        """)
-
-        c.execute("""
-        CREATE TABLE IF NOT EXISTS cards (
-            id TEXT PRIMARY KEY,
-            name TEXT NOT NULL,
-            set_code TEXT NOT NULL,
-            mana_cost TEXT,
-            type_line TEXT,
-            rarity TEXT,
-            oracle_text TEXT,
-            power TEXT,
-            toughness TEXT,
-            image_url TEXT,
-            color_identity TEXT,
-            FOREIGN KEY (set_code) REFERENCES sets(code)
-        )
-        """)
-
-        c.execute("""
-        CREATE TABLE IF NOT EXISTS users (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            username TEXT UNIQUE NOT NULL,
-            password_hash TEXT NOT NULL,
-            created_at TEXT DEFAULT CURRENT_TIMESTAMP
-        )
-        """)
-
-        c.execute("""
-        CREATE TABLE IF NOT EXISTS cubes (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            name TEXT NOT NULL,
-            description TEXT,
-            owner_id INTEGER,
-            FOREIGN KEY (owner_id) REFERENCES users(id)
-        )
-        """)
-
-        c.execute("""
-        CREATE TABLE IF NOT EXISTS cube_cards (
-            cube_id INTEGER,
-            card_id TEXT,
-            FOREIGN KEY (cube_id) REFERENCES cubes(id),
-            FOREIGN KEY (card_id) REFERENCES cards(id)
-        )
-        """)
-
-        conn.commit()
-        conn.close()
-        print(f"✅ Base de données initialisée : {DB_PATH}")
-
-
-# Initialisation de la base de données au démarrage
-init_database()
+# Note: Base de données SQLite locale désactivée - on utilise Supabase maintenant
 
 
 class MainWindow(QMainWindow):
@@ -259,57 +192,44 @@ class MainWindow(QMainWindow):
         self._load_cards()
 
     def _load_cards(self):
-        """Charge les cartes depuis la base et stocke image_url et mana_cost."""
-        conn = sqlite3.connect(DB_PATH)
-        c = conn.cursor()
-        # On tente de récupérer color_identity si présent (non nécessaire ici)
+        """Charge les cartes depuis Supabase."""
         try:
-            c.execute(
-                """
-                SELECT name, mana_cost, type_line, rarity, set_code, image_url, color_identity
-                FROM cards
-                ORDER BY name
-                """
-            )
-            rows = c.fetchall()
-            self.has_color_identity = True
-        except sqlite3.OperationalError:
-            c.execute(
-                """
-                SELECT name, mana_cost, type_line, rarity, set_code, image_url
-                FROM cards
-                ORDER BY name
-                """
-            )
-            rows_basic = c.fetchall()
-            # normalise la forme : ajoute champ vide pour color_identity
-            rows = [(*r, "") for r in rows_basic]
-            self.has_color_identity = False
-        conn.close()
+            supabase = get_supabase_client()
+            if not supabase:
+                print("⚠️ Supabase non configuré, bibliothèque vide")
+                return
 
-        self.table.setRowCount(len(rows))
-        self.card_images = []
-        self.card_mana_costs = []  # pour filtrer par couleur si besoin
-        self.card_color_ids = []
+            response = supabase.table("cards").select("name, mana_cost, type_line, rarity, set_code, image_uri, colors").order("name").execute()
+            cards = response.data
 
-        for i, row in enumerate(rows):
-            name = row[0] or ""
-            mana_cost = row[1] or ""
-            type_line = row[2] or ""
-            rarity = row[3] or ""
-            set_code = row[4] or ""
-            image_url = row[5] or ""
-            color_identity = row[6] or ""
+            self.table.setRowCount(len(cards))
+            self.card_images = []
+            self.card_mana_costs = []
+            self.card_color_ids = []
 
-            self.table.setItem(i, 0, QTableWidgetItem(name))
-            self.table.setItem(i, 1, QTableWidgetItem(mana_cost))
-            self.table.setItem(i, 2, QTableWidgetItem(type_line))
-            self.table.setItem(i, 3, QTableWidgetItem(rarity))
-            self.table.setItem(i, 4, QTableWidgetItem(set_code))
+            for i, card in enumerate(cards):
+                name = card.get("name", "")
+                mana_cost = card.get("mana_cost", "")
+                type_line = card.get("type_line", "")
+                rarity = card.get("rarity", "")
+                set_code = card.get("set_code", "")
+                image_url = card.get("image_uri", "")
+                colors = card.get("colors", [])
 
-            self.card_images.append(image_url)
-            self.card_mana_costs.append(str(mana_cost))
-            self.card_color_ids.append(str(color_identity))
+                self.table.setItem(i, 0, QTableWidgetItem(name))
+                self.table.setItem(i, 1, QTableWidgetItem(mana_cost))
+                self.table.setItem(i, 2, QTableWidgetItem(type_line))
+                self.table.setItem(i, 3, QTableWidgetItem(rarity))
+                self.table.setItem(i, 4, QTableWidgetItem(set_code))
+
+                self.card_images.append(image_url)
+                self.card_mana_costs.append(mana_cost)
+                self.card_color_ids.append(','.join(colors) if colors else '')
+
+            print(f"✅ {len(cards)} cartes chargées depuis Supabase")
+        except Exception as e:
+            print(f"❌ Erreur chargement cartes: {e}")
+            QMessageBox.warning(self, "Erreur", f"Impossible de charger les cartes: {e}")
 
     def show_card_image(self, row, col):
         """Affiche l'image de la carte sélectionnée (clic)."""
@@ -370,40 +290,25 @@ class MainWindow(QMainWindow):
         self.tabs.addTab(booster_widget, "Booster")
 
     # utilitaires DB (robustes si colonnes manquantes)
-    def _try_fetch_with_ci(self, where_clause="", params=()):
-        """Tente de récupérer name, rarity, mana_cost, color_identity (si existant)."""
-        conn = sqlite3.connect(DB_PATH)
-        c = conn.cursor()
+    def fetch_cards(self, set_code=None):
+        """Retourne tuples (name, rarity, mana_cost, colors) depuis Supabase"""
         try:
-            sql = "SELECT name, rarity, mana_cost, color_identity FROM cards " + where_clause
-            c.execute(sql, params)
-            rows = c.fetchall()
-            conn.close()
-            return rows
-        except sqlite3.OperationalError:
-            conn.close()
-            return None
+            supabase = get_supabase_client()
+            if not supabase:
+                return []
 
-    def _fetch_basic(self, where_clause="", params=()):
-        """Récupère name, rarity, mana_cost et ajoute color_identity vide si absent."""
-        conn = sqlite3.connect(DB_PATH)
-        c = conn.cursor()
-        sql = "SELECT name, rarity, mana_cost FROM cards " + where_clause
-        c.execute(sql, params)
-        rows = c.fetchall()
-        conn.close()
-        return [(n, r, m, "") for (n, r, m) in rows]
+            query = supabase.table("cards").select("name, rarity, mana_cost, colors")
+            if set_code:
+                query = query.eq("set_code", set_code)
 
-    def fetch_cards(self, where_clause="", params=()):
-        """
-        Retourne tuples (name, rarity, mana_cost, color_identity) si possible,
-        sinon color_identity est vide.
-        """
-        rows = self._try_fetch_with_ci(where_clause, params)
-        if rows is not None:
-            # rows already have (name, rarity, mana_cost, color_identity)
-            return rows
-        return self._fetch_basic(where_clause, params)
+            response = query.execute()
+            cards = response.data
+
+            return [(c.get('name', ''), c.get('rarity', ''), c.get('mana_cost', ''),
+                     ','.join(c.get('colors', []))) for c in cards]
+        except Exception as e:
+            print(f"❌ Erreur fetch_cards: {e}")
+            return []
 
     # ---------- filtres monochromes basés sur mana_cost ----------
     def filter_monochrome_by_mana_cost(self, rows, color_letter):
@@ -623,16 +528,16 @@ class MainWindow(QMainWindow):
         """Récupère une image_url pour une carte (premier résultat par nom)."""
         if not name:
             return None
-        conn = sqlite3.connect(DB_PATH)
-        c = conn.cursor()
         try:
-            c.execute("SELECT image_url FROM cards WHERE name = ? LIMIT 1", (name,))
-            row = c.fetchone()
-            conn.close()
-            if row and row[0]:
-                return row[0]
-        except Exception:
-            conn.close()
+            supabase = get_supabase_client()
+            if not supabase:
+                return None
+
+            response = supabase.table("cards").select("image_uri").eq("name", name).limit(1).execute()
+            if response.data and len(response.data) > 0:
+                return response.data[0].get('image_uri')
+        except Exception as e:
+            print(f"❌ Erreur _get_image_url_for_name: {e}")
         return None
 
     # ---------------------- SIMULATION ----------------------

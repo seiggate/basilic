@@ -1,10 +1,19 @@
 # client_py/core/supabase_client.py
 import os
+import sys
 from pathlib import Path
 from dotenv import load_dotenv
 from supabase import create_client, Client
 
-env_path = Path(__file__).parent.parent.parent / ".env"
+# Gestion des chemins pour PyInstaller
+if getattr(sys, 'frozen', False):
+    # Mode exécutable PyInstaller
+    base_path = Path(sys._MEIPASS)
+    env_path = base_path / ".env"
+else:
+    # Mode développement
+    env_path = Path(__file__).parent.parent.parent / ".env"
+
 load_dotenv(dotenv_path=env_path)
 
 SUPABASE_URL = os.environ.get("SUPABASE_URL", "")
