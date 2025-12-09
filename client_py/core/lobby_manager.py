@@ -78,7 +78,7 @@ class LobbyManager:
         Returns:
             Player data dictionary or None on error
         """
-        lobby = self.supabase.table("lobbies").select("*").eq("id", lobby_id).maybeSingle().execute()
+        lobby = self.supabase.table("lobbies").select("*").eq("id", lobby_id).maybe_single().execute()
 
         if not lobby.data or lobby.data["status"] != "waiting":
             print("❌ Lobby not available")
@@ -116,7 +116,7 @@ class LobbyManager:
         Returns:
             Player data dictionary or None on error
         """
-        lobby = self.supabase.table("lobbies").select("*").eq("code", code).maybeSingle().execute()
+        lobby = self.supabase.table("lobbies").select("*").eq("code", code).maybe_single().execute()
 
         if not lobby.data:
             print(f"❌ Lobby with code {code} not found")
@@ -134,7 +134,7 @@ class LobbyManager:
         Returns:
             True if successful, False otherwise
         """
-        lobby = self.supabase.table("lobbies").select("status").eq("id", lobby_id).maybeSingle().execute()
+        lobby = self.supabase.table("lobbies").select("status").eq("id", lobby_id).maybe_single().execute()
 
         if not lobby.data or lobby.data["status"] != "waiting":
             print("❌ Cannot change set: lobby already started")
@@ -201,7 +201,7 @@ class LobbyManager:
         Returns:
             Draft data with boosters or None on error
         """
-        lobby = self.supabase.table("lobbies").select("*").eq("id", lobby_id).maybeSingle().execute()
+        lobby = self.supabase.table("lobbies").select("*").eq("id", lobby_id).maybe_single().execute()
 
         if not lobby.data:
             print("❌ Lobby not found")
