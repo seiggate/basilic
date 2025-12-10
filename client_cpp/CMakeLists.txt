@@ -84,13 +84,12 @@ set(UTILS_HEADERS
 )
 
 # Main executable
-# Note: Commented out MANAGER, UI sources until they are implemented
 add_executable(${PROJECT_NAME}
     main.cpp
     ${MODEL_SOURCES}
     ${MODEL_HEADERS}
-    # ${MANAGER_SOURCES}
-    # ${MANAGER_HEADERS}
+    ${MANAGER_SOURCES}
+    ${MANAGER_HEADERS}
     # ${UI_SOURCES}
     # ${UI_HEADERS}
     # ${UI_FORMS}
@@ -180,6 +179,29 @@ target_include_directories(test_models PRIVATE
 
 target_link_libraries(test_models PRIVATE
     Qt6::Core
+)
+
+# Test executable for managers
+add_executable(test_managers
+    test_managers.cpp
+    ${MODEL_SOURCES}
+    ${MODEL_HEADERS}
+    ${MANAGER_SOURCES}
+    ${MANAGER_HEADERS}
+    ${UTILS_SOURCES}
+    ${UTILS_HEADERS}
+)
+
+target_include_directories(test_managers PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}
+    ${CMAKE_CURRENT_SOURCE_DIR}/model
+    ${CMAKE_CURRENT_SOURCE_DIR}/manager
+    ${CMAKE_CURRENT_SOURCE_DIR}/utils
+)
+
+target_link_libraries(test_managers PRIVATE
+    Qt6::Core
+    Qt6::Network
 )
 
 # Copy .env file to build directory
