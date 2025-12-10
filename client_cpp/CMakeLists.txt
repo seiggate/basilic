@@ -84,15 +84,16 @@ set(UTILS_HEADERS
 )
 
 # Main executable
+# Note: Commented out MANAGER, UI sources until they are implemented
 add_executable(${PROJECT_NAME}
     main.cpp
     ${MODEL_SOURCES}
     ${MODEL_HEADERS}
-    ${MANAGER_SOURCES}
-    ${MANAGER_HEADERS}
-    ${UI_SOURCES}
-    ${UI_HEADERS}
-    ${UI_FORMS}
+    # ${MANAGER_SOURCES}
+    # ${MANAGER_HEADERS}
+    # ${UI_SOURCES}
+    # ${UI_HEADERS}
+    # ${UI_FORMS}
     ${UTILS_SOURCES}
     ${UTILS_HEADERS}
 )

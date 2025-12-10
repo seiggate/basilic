@@ -41,7 +41,11 @@ if %ERRORLEVEL% EQU 0 (
     echo.
     echo Running tests...
     echo ==================================
-    Debug\test_models.exe
+    if "%USE_MINGW%"=="1" (
+        test_models.exe
+    ) else (
+        Debug\test_models.exe
+    )
     echo ==================================
 ) else (
     echo.
