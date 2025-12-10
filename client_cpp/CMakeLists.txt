@@ -165,6 +165,22 @@ if(Qt6_FOUND)
     endif()
 endif()
 
+# Test executable for models
+add_executable(test_models
+    test_models.cpp
+    ${MODEL_SOURCES}
+    ${MODEL_HEADERS}
+)
+
+target_include_directories(test_models PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}
+    ${CMAKE_CURRENT_SOURCE_DIR}/model
+)
+
+target_link_libraries(test_models PRIVATE
+    Qt6::Core
+)
+
 # Copy .env file to build directory
 configure_file(${CMAKE_CURRENT_SOURCE_DIR}/../.env ${CMAKE_CURRENT_BINARY_DIR}/.env COPYONLY)
 
