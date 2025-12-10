@@ -1,7 +1,7 @@
 # client_py/ui/main_window.py
 import os
+import sys
 import random
-import sqlite3
 import string
 import socket
 import json
@@ -103,11 +103,31 @@ class RoundTableWidget(QWidget):
                 painter.drawText(x - 30, y - 5, 60, 20, Qt.AlignCenter, f"Si\u00e8ge {i+1}")
 
 
-# chemin vers la DB
-DB_PATH = Path(__file__).parent.parent / "database" / "basilic.db"
-# dossier de cache pour images du booster
-CACHE_DIR = Path(__file__).parent.parent / "cache_booster"
+# Détection de l'environnement PyInstaller
+def get_app_data_dir():
+    """Retourne le répertoire de données de l'application"""
+    if getattr(sys, 'frozen', False):
+        # Mode exécutable PyInstaller
+        if os.name == 'nt':  # Windows
+            base = Path(os.environ.get('APPDATA', Path.home() / 'AppData' / 'Roaming'))
+        else:  # Linux/Mac
+            base = Path.home() / '.local' / 'share'
+        return base / 'Basilic'
+    else:
+        # Mode développement
+        return Path(__file__).parent.parent
+
+# Création des répertoires nécessaires
+APP_DATA_DIR = get_app_data_dir()
+APP_DATA_DIR.mkdir(parents=True, exist_ok=True)
+
+# Chemins des fichiers
+DB_PATH = APP_DATA_DIR / "basilic.db"
+CACHE_DIR = APP_DATA_DIR / "cache_booster"
 CACHE_DIR.mkdir(parents=True, exist_ok=True)
+
+
+# Note: Base de données SQLite locale désactivée - on utilise Supabase maintenant
 
 
 class MainWindow(QMainWindow):
@@ -125,6 +145,7 @@ class MainWindow(QMainWindow):
         self.lobby_state = None
         self.current_lobby_id = None
         self.current_player_id = None
+        self.available_sets = []
         self.supabase = get_supabase_client()
         self.lobby_refresh_timer = QTimer()
         self.lobby_refresh_timer.timeout.connect(self.refresh_lobbies)
@@ -133,6 +154,9 @@ class MainWindow(QMainWindow):
         self.cleanup_timer = QTimer()
         self.cleanup_timer.timeout.connect(self.cleanup_abandoned_lobbies)
         self.cleanup_timer.start(300000)
+
+        # Load available sets from Supabase
+        self.load_available_sets()
 
         # setup tabs AFTER Supabase initialization
         self._setup_library_tab()
@@ -167,57 +191,44 @@ class MainWindow(QMainWindow):
         self._load_cards()
 
     def _load_cards(self):
-        """Charge les cartes depuis la base et stocke image_url et mana_cost."""
-        conn = sqlite3.connect(DB_PATH)
-        c = conn.cursor()
-        # On tente de récupérer color_identity si présent (non nécessaire ici)
+        """Charge les cartes depuis Supabase."""
         try:
-            c.execute(
-                """
-                SELECT name, mana_cost, type_line, rarity, set_code, image_url, color_identity
-                FROM cards
-                ORDER BY name
-                """
-            )
-            rows = c.fetchall()
-            self.has_color_identity = True
-        except sqlite3.OperationalError:
-            c.execute(
-                """
-                SELECT name, mana_cost, type_line, rarity, set_code, image_url
-                FROM cards
-                ORDER BY name
-                """
-            )
-            rows_basic = c.fetchall()
-            # normalise la forme : ajoute champ vide pour color_identity
-            rows = [(*r, "") for r in rows_basic]
-            self.has_color_identity = False
-        conn.close()
+            supabase = get_supabase_client()
+            if not supabase:
+                print("⚠️ Supabase non configuré, bibliothèque vide")
+                return
 
-        self.table.setRowCount(len(rows))
-        self.card_images = []
-        self.card_mana_costs = []  # pour filtrer par couleur si besoin
-        self.card_color_ids = []
+            response = supabase.table("cards").select("name, mana_cost, type_line, rarity, set_code, image_uri, colors").order("name").execute()
+            cards = response.data
 
-        for i, row in enumerate(rows):
-            name = row[0] or ""
-            mana_cost = row[1] or ""
-            type_line = row[2] or ""
-            rarity = row[3] or ""
-            set_code = row[4] or ""
-            image_url = row[5] or ""
-            color_identity = row[6] or ""
+            self.table.setRowCount(len(cards))
+            self.card_images = []
+            self.card_mana_costs = []
+            self.card_color_ids = []
 
-            self.table.setItem(i, 0, QTableWidgetItem(name))
-            self.table.setItem(i, 1, QTableWidgetItem(mana_cost))
-            self.table.setItem(i, 2, QTableWidgetItem(type_line))
-            self.table.setItem(i, 3, QTableWidgetItem(rarity))
-            self.table.setItem(i, 4, QTableWidgetItem(set_code))
+            for i, card in enumerate(cards):
+                name = card.get("name", "")
+                mana_cost = card.get("mana_cost", "")
+                type_line = card.get("type_line", "")
+                rarity = card.get("rarity", "")
+                set_code = card.get("set_code", "")
+                image_url = card.get("image_uri", "")
+                colors = card.get("colors", [])
 
-            self.card_images.append(image_url)
-            self.card_mana_costs.append(str(mana_cost))
-            self.card_color_ids.append(str(color_identity))
+                self.table.setItem(i, 0, QTableWidgetItem(name))
+                self.table.setItem(i, 1, QTableWidgetItem(mana_cost))
+                self.table.setItem(i, 2, QTableWidgetItem(type_line))
+                self.table.setItem(i, 3, QTableWidgetItem(rarity))
+                self.table.setItem(i, 4, QTableWidgetItem(set_code))
+
+                self.card_images.append(image_url)
+                self.card_mana_costs.append(mana_cost)
+                self.card_color_ids.append(','.join(colors) if colors else '')
+
+            print(f"✅ {len(cards)} cartes chargées depuis Supabase")
+        except Exception as e:
+            print(f"❌ Erreur chargement cartes: {e}")
+            QMessageBox.warning(self, "Erreur", f"Impossible de charger les cartes: {e}")
 
     def show_card_image(self, row, col):
         """Affiche l'image de la carte sélectionnée (clic)."""
@@ -278,40 +289,25 @@ class MainWindow(QMainWindow):
         self.tabs.addTab(booster_widget, "Booster")
 
     # utilitaires DB (robustes si colonnes manquantes)
-    def _try_fetch_with_ci(self, where_clause="", params=()):
-        """Tente de récupérer name, rarity, mana_cost, color_identity (si existant)."""
-        conn = sqlite3.connect(DB_PATH)
-        c = conn.cursor()
+    def fetch_cards(self, set_code=None):
+        """Retourne tuples (name, rarity, mana_cost, colors) depuis Supabase"""
         try:
-            sql = "SELECT name, rarity, mana_cost, color_identity FROM cards " + where_clause
-            c.execute(sql, params)
-            rows = c.fetchall()
-            conn.close()
-            return rows
-        except sqlite3.OperationalError:
-            conn.close()
-            return None
+            supabase = get_supabase_client()
+            if not supabase:
+                return []
 
-    def _fetch_basic(self, where_clause="", params=()):
-        """Récupère name, rarity, mana_cost et ajoute color_identity vide si absent."""
-        conn = sqlite3.connect(DB_PATH)
-        c = conn.cursor()
-        sql = "SELECT name, rarity, mana_cost FROM cards " + where_clause
-        c.execute(sql, params)
-        rows = c.fetchall()
-        conn.close()
-        return [(n, r, m, "") for (n, r, m) in rows]
+            query = supabase.table("cards").select("name, rarity, mana_cost, colors")
+            if set_code:
+                query = query.eq("set_code", set_code)
 
-    def fetch_cards(self, where_clause="", params=()):
-        """
-        Retourne tuples (name, rarity, mana_cost, color_identity) si possible,
-        sinon color_identity est vide.
-        """
-        rows = self._try_fetch_with_ci(where_clause, params)
-        if rows is not None:
-            # rows already have (name, rarity, mana_cost, color_identity)
-            return rows
-        return self._fetch_basic(where_clause, params)
+            response = query.execute()
+            cards = response.data
+
+            return [(c.get('name', ''), c.get('rarity', ''), c.get('mana_cost', ''),
+                     ','.join(c.get('colors', []))) for c in cards]
+        except Exception as e:
+            print(f"❌ Erreur fetch_cards: {e}")
+            return []
 
     # ---------- filtres monochromes basés sur mana_cost ----------
     def filter_monochrome_by_mana_cost(self, rows, color_letter):
@@ -365,15 +361,38 @@ class MainWindow(QMainWindow):
     # -------------------- génération du play booster --------------------
     def generate_booster(self):
         """Génère un Play Booster selon la spécification donnée."""
-        # charge pools (rows have: name, rarity, mana_cost, color_identity_or_empty)
-        commons_raw = self.fetch_cards("WHERE rarity='common'")
-        uncommons_raw = self.fetch_cards("WHERE rarity='uncommon'")
-        rares_raw = self.fetch_cards("WHERE rarity='rare'")
-        mythics_raw = self.fetch_cards("WHERE rarity='mythic'")
-        basics_raw = self.fetch_cards("WHERE type_line LIKE '%Basic Land%'")
+        # Récupère toutes les cartes depuis Supabase
+        try:
+            supabase = get_supabase_client()
+            if not supabase:
+                QMessageBox.warning(self, "Erreur", "Supabase non configuré")
+                return
 
-        # the_list attempt (adjust if you have a specific way to identify it)
-        the_list_raw = self.fetch_cards("WHERE set_code='SLD' OR set_code='LIST'")
+            # Récupère toutes les cartes avec set_code par défaut (blb)
+            all_cards_response = supabase.table("cards").select("name, rarity, mana_cost, colors, type_line, set_code").eq("set_code", "blb").execute()
+            all_cards = all_cards_response.data
+
+            if not all_cards:
+                QMessageBox.warning(self, "Erreur", "Aucune carte trouvée")
+                return
+
+            # Filtre par rareté
+            commons_raw = [(c['name'], c['rarity'], c.get('mana_cost', ''), ','.join(c.get('colors', [])))
+                          for c in all_cards if c['rarity'] == 'common']
+            uncommons_raw = [(c['name'], c['rarity'], c.get('mana_cost', ''), ','.join(c.get('colors', [])))
+                            for c in all_cards if c['rarity'] == 'uncommon']
+            rares_raw = [(c['name'], c['rarity'], c.get('mana_cost', ''), ','.join(c.get('colors', [])))
+                        for c in all_cards if c['rarity'] == 'rare']
+            mythics_raw = [(c['name'], c['rarity'], c.get('mana_cost', ''), ','.join(c.get('colors', [])))
+                          for c in all_cards if c['rarity'] == 'mythic']
+            basics_raw = [(c['name'], c['rarity'], c.get('mana_cost', ''), ','.join(c.get('colors', [])))
+                         for c in all_cards if 'Basic Land' in c.get('type_line', '')]
+
+            # The List (pour l'instant vide, peut être ajouté plus tard)
+            the_list_raw = []
+        except Exception as e:
+            QMessageBox.critical(self, "Erreur", f"Erreur lors du chargement des cartes: {e}")
+            return
 
         # Pools (name, rarity) for easy picks when color not needed
         commons_simple = [(n, r) for (n, r, m, ci) in commons_raw]
@@ -531,16 +550,16 @@ class MainWindow(QMainWindow):
         """Récupère une image_url pour une carte (premier résultat par nom)."""
         if not name:
             return None
-        conn = sqlite3.connect(DB_PATH)
-        c = conn.cursor()
         try:
-            c.execute("SELECT image_url FROM cards WHERE name = ? LIMIT 1", (name,))
-            row = c.fetchone()
-            conn.close()
-            if row and row[0]:
-                return row[0]
-        except Exception:
-            conn.close()
+            supabase = get_supabase_client()
+            if not supabase:
+                return None
+
+            response = supabase.table("cards").select("image_uri").eq("name", name).limit(1).execute()
+            if response.data and len(response.data) > 0:
+                return response.data[0].get('image_uri')
+        except Exception as e:
+            print(f"❌ Erreur _get_image_url_for_name: {e}")
         return None
 
     # ---------------------- SIMULATION ----------------------
@@ -601,31 +620,78 @@ class MainWindow(QMainWindow):
         self.update_draft_display()
 
     def _generate_draft_pack(self):
-        commons_raw = self.fetch_cards("WHERE rarity='common'")
-        uncommons_raw = self.fetch_cards("WHERE rarity='uncommon'")
-        rares_raw = self.fetch_cards("WHERE rarity='rare'")
-        mythics_raw = self.fetch_cards("WHERE rarity='mythic'")
+        """Génère un booster de draft depuis Supabase"""
+        try:
+            supabase = get_supabase_client()
+            if not supabase:
+                return []
 
-        commons_simple = [(n, r) for (n, r, m, ci) in commons_raw]
-        uncommons_simple = [(n, r) for (n, r, m, ci) in uncommons_raw]
-        rares_simple = [(n, r) for (n, r, m, ci) in rares_raw]
-        mythics_simple = [(n, r) for (n, r, m, ci) in mythics_raw]
+            # Récupère toutes les cartes (set par défaut: blb)
+            all_cards = supabase.table("cards").select("name, rarity, mana_cost, colors").eq("set_code", "blb").execute()
 
-        pack = []
+            if not all_cards.data:
+                return []
 
-        for _ in range(10):
-            pack.append(self._pick_random(commons_simple))
+            # Filtre par rareté
+            commons_simple = [(c['name'], c['rarity']) for c in all_cards.data if c['rarity'] == 'common']
+            uncommons_simple = [(c['name'], c['rarity']) for c in all_cards.data if c['rarity'] == 'uncommon']
+            rares_simple = [(c['name'], c['rarity']) for c in all_cards.data if c['rarity'] == 'rare']
+            mythics_simple = [(c['name'], c['rarity']) for c in all_cards.data if c['rarity'] == 'mythic']
 
-        for _ in range(3):
-            pack.append(self._pick_random(uncommons_simple))
+            pack = []
 
-        if random.random() < 0.125:
-            pack.append(self._pick_random(mythics_simple))
-        else:
-            pack.append(self._pick_random(rares_simple))
+            for _ in range(10):
+                pack.append(self._pick_random(commons_simple))
 
-        random.shuffle(pack)
-        return pack
+            for _ in range(3):
+                pack.append(self._pick_random(uncommons_simple))
+
+            if random.random() < 0.125:
+                pack.append(self._pick_random(mythics_simple))
+            else:
+                pack.append(self._pick_random(rares_simple))
+
+            random.shuffle(pack)
+            return pack
+        except Exception as e:
+            print(f"❌ Erreur _generate_draft_pack: {e}")
+            return []
+
+    def _generate_draft_pack_for_set(self, set_code):
+        if not self.supabase:
+            return []
+
+        try:
+            commons = self.supabase.table('cards').select('id, name, rarity').eq('set_code', set_code).eq('rarity', 'common').execute()
+            uncommons = self.supabase.table('cards').select('id, name, rarity').eq('set_code', set_code).eq('rarity', 'uncommon').execute()
+            rares = self.supabase.table('cards').select('id, name, rarity').eq('set_code', set_code).eq('rarity', 'rare').execute()
+            mythics = self.supabase.table('cards').select('id, name, rarity').eq('set_code', set_code).eq('rarity', 'mythic').execute()
+
+            pack_card_ids = []
+
+            for _ in range(10):
+                if commons.data:
+                    card = random.choice(commons.data)
+                    pack_card_ids.append(card['id'])
+
+            for _ in range(3):
+                if uncommons.data:
+                    card = random.choice(uncommons.data)
+                    pack_card_ids.append(card['id'])
+
+            if random.random() < 0.125 and mythics.data:
+                card = random.choice(mythics.data)
+                pack_card_ids.append(card['id'])
+            elif rares.data:
+                card = random.choice(rares.data)
+                pack_card_ids.append(card['id'])
+
+            random.shuffle(pack_card_ids)
+            return pack_card_ids
+
+        except Exception as e:
+            print(f"Erreur génération booster: {e}")
+            return []
 
     def update_draft_display(self):
         if not self.draft_state:
@@ -844,6 +910,17 @@ class MainWindow(QMainWindow):
         self.update_draft_display()
 
     # ---------------------- LOBBY ----------------------
+    def load_available_sets(self):
+        if not self.supabase:
+            return
+
+        try:
+            result = self.supabase.table('sets').select('code, name').order('name').execute()
+            self.available_sets = result.data
+        except Exception as e:
+            print(f"Erreur chargement sets: {e}")
+            self.available_sets = []
+
     def _setup_lobby_tab(self):
         lobby_widget = QWidget()
         main_layout = QVBoxLayout(lobby_widget)
@@ -978,7 +1055,7 @@ class MainWindow(QMainWindow):
 
         dialog = QDialog(self)
         dialog.setWindowTitle("Créer un lobby")
-        dialog.setFixedSize(400, 300)
+        dialog.setFixedSize(400, 350)
 
         layout = QFormLayout(dialog)
 
@@ -996,8 +1073,16 @@ class MainWindow(QMainWindow):
         max_players_spin.setMaximum(8)
         max_players_spin.setValue(8)
 
+        from PySide6.QtWidgets import QComboBox
+        set_combo = QComboBox()
+        for set_info in self.available_sets:
+            set_combo.addItem(f"{set_info['name']} ({set_info['code'].upper()})", set_info['code'])
+        if set_combo.count() == 0:
+            set_combo.addItem("Bloomburrow (BLB)", "blb")
+
         layout.addRow("Votre nom:", player_name_input)
         layout.addRow("Nom du lobby:", lobby_name_input)
+        layout.addRow("Extension:", set_combo)
         layout.addRow("Nombre de joueurs:", max_players_spin)
 
         button_box = QHBoxLayout()
@@ -1023,7 +1108,8 @@ class MainWindow(QMainWindow):
             player_name = player_name_input.text().strip() or "Anonymous"
             lobby_name = lobby_name_input.text().strip() or "Partie de Draft"
             max_players = max_players_spin.value()
-            self.create_lobby(player_name, lobby_name, max_players)
+            set_code = set_combo.currentData() or "blb"
+            self.create_lobby(player_name, lobby_name, max_players, set_code)
             dialog.accept()
 
         create_btn.clicked.connect(create)
@@ -1033,7 +1119,7 @@ class MainWindow(QMainWindow):
 
         dialog.exec()
 
-    def create_lobby(self, player_name, lobby_name, max_players):
+    def create_lobby(self, player_name, lobby_name, max_players, set_code='blb'):
         if not self.supabase:
             return
 
@@ -1045,7 +1131,8 @@ class MainWindow(QMainWindow):
                 'code': code,
                 'creator_name': player_name,
                 'max_players': max_players,
-                'status': 'waiting'
+                'status': 'waiting',
+                'set_code': set_code
             }
             result = self.supabase.table('lobbies').insert(lobby_data).execute()
             lobby = result.data[0]
@@ -1203,9 +1290,49 @@ class MainWindow(QMainWindow):
             return
 
         try:
+            lobby_result = self.supabase.table('lobbies').select('*, lobby_players(*)').eq('id', self.current_lobby_id).single().execute()
+            lobby = lobby_result.data
+            players = lobby.get('lobby_players', [])
+            set_code = lobby.get('set_code', 'blb')
+
+            if len(players) != lobby['max_players']:
+                QMessageBox.warning(self, "Erreur", "Le lobby n'est pas complet")
+                return
+
             self.supabase.table('lobbies').update({'status': 'in_progress'}).eq('id', self.current_lobby_id).execute()
-            QMessageBox.information(self, "Partie lancée", "La partie a été lancée!")
+
+            draft_data = {
+                'lobby_id': self.current_lobby_id,
+                'set_code': set_code,
+                'total_rounds': 3,
+                'current_round': 1,
+                'status': 'active'
+            }
+            draft_result = self.supabase.table('draft_sessions').insert(draft_data).execute()
+            draft_session = draft_result.data[0]
+            draft_session_id = draft_session['id']
+
+            for round_num in range(1, 4):
+                for player in players:
+                    pack_cards = self._generate_draft_pack_for_set(set_code)
+                    pack_data = {
+                        'draft_session_id': draft_session_id,
+                        'player_id': player['id'],
+                        'round_number': round_num,
+                        'cards': pack_cards,
+                        'current_position': player['seat_position']
+                    }
+                    self.supabase.table('draft_packs').insert(pack_data).execute()
+
+            QMessageBox.information(self, "Draft lancé",
+                f"Le draft a été lancé avec l'extension {set_code.upper()}!\n\n"
+                f"Session ID: {draft_session_id}\n"
+                f"Nombre de joueurs: {len(players)}\n"
+                f"Boosters générés: {len(players) * 3}")
             self.btn_start_game.hide()
+
+            self.tabs.setCurrentIndex(2)
+
         except Exception as e:
             QMessageBox.critical(self, "Erreur", f"Erreur au lancement: {str(e)}")
 
