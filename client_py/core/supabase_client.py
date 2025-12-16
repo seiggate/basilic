@@ -24,5 +24,18 @@ supabase: Client = None
 def get_supabase_client():
     global supabase
     if supabase is None and SUPABASE_URL and SUPABASE_KEY:
-        supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
+        # Vérifier si l'URL est valide (pas un placeholder Bolt.new)
+        if "0ec90b57d6e95fcbda19832f" in SUPABASE_URL:
+            print("⚠️ URL Supabase invalide (placeholder Bolt.new)")
+            return None
+
+        try:
+            supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
+            # Test la connexion
+            supabase.table('sets').select('code').limit(1).execute()
+            return supabase
+        except Exception as e:
+            print(f"⚠️ Impossible de se connecter à Supabase: {e}")
+            supabase = None
+            return None
     return supabase
