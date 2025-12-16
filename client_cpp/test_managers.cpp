@@ -1,10 +1,10 @@
 #include <QCoreApplication>
 #include <QDebug>
 #include <QTimer>
-#include "Config.h"
-#include "SupabaseClient.h"
-#include "DatabaseManager.h"
-#include "LobbyManager.h"
+#include "utils/Config.h"
+#include "manager/SupabaseClient.h"
+#include "manager/DatabaseManager.h"
+#include "manager/LobbyManager.h"
 
 void testSupabaseConnection(SupabaseClient *client)
 {
@@ -24,7 +24,7 @@ void testDatabaseManager(DatabaseManager *dbManager)
         qDebug() << "Loaded" << sets.size() << "sets";
         if (!sets.isEmpty()) {
             const Set &firstSet = sets.first();
-            qDebug() << "First set:" << firstSet.getName() << "(" << firstSet.getCode() << ")";
+            qDebug() << "First set:" << firstSet.name() << "(" << firstSet.code() << ")";
         }
     });
 
@@ -44,8 +44,8 @@ void testLobbyManager(LobbyManager *lobbyManager)
         }
         qDebug() << "Found" << lobbies.size() << "waiting lobbies";
         for (const Lobby &lobby : lobbies) {
-            qDebug() << "  -" << lobby.getName() << "(" << lobby.getCode() << ")"
-                     << lobby.getPlayerCount() << "/" << lobby.getMaxPlayers() << "players";
+            qDebug() << "  -" << lobby.name() << "(" << lobby.code() << ")"
+                     << lobby.currentPlayerCount() << "/" << lobby.maxPlayers() << "players";
         }
     });
 
@@ -62,18 +62,18 @@ int main(int argc, char *argv[])
     qDebug() << "Testing Basilic C++ Managers";
     qDebug() << "==================================\n";
 
-    Config config;
-    if (!config.load()) {
+    Config* config = Config::instance();
+    if (!config->loadEnvironment()) {
         qCritical() << "Failed to load configuration";
         return 1;
     }
 
     qDebug() << "Configuration loaded:";
-    qDebug() << "  Supabase URL:" << config.getSupabaseUrl();
-    qDebug() << "  API Key length:" << config.getSupabaseKey().length() << "chars";
+    qDebug() << "  Supabase URL:" << config->supabaseUrl();
+    qDebug() << "  API Key length:" << config->supabaseAnonKey().length() << "chars";
 
     SupabaseClient client;
-    if (!client.initialize(config.getSupabaseUrl(), config.getSupabaseKey())) {
+    if (!client.initialize(config->supabaseUrl(), config->supabaseAnonKey())) {
         qCritical() << "Failed to initialize Supabase client";
         return 1;
     }
