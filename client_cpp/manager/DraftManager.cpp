@@ -67,7 +67,7 @@ void DraftManager::initializePacks(const QString &draftId,
                 int randomIndex = QRandomGenerator::global()->bounded(availableCards.size());
                 const Card &card = availableCards[randomIndex];
 
-                QJsonObject cardObj = QJsonDocument::fromJson(card.toJson()).object();
+                QJsonObject cardObj = card.toJson();
                 packCards.append(cardObj);
             }
 
@@ -119,9 +119,9 @@ void DraftManager::getCurrentPack(const QString &draftId,
         }
 
         QString filter = QString("draft_id=eq.%1&player_seat=eq.%2&round=eq.%3")
-            .arg(draft.getId())
+            .arg(draft.id())
             .arg(playerSeat)
-            .arg(draft.getCurrentRound());
+            .arg(draft.currentRound());
 
         this->m_client->select("draft_packs", "*", filter,
             [this, callback](const QJsonArray &data, const QString &error) {
@@ -158,15 +158,15 @@ void DraftManager::pickCard(const QString &draftId,
                 return;
             }
 
-            QVector<Card> cards = pack.getCards();
+            QVector<Card> cards = pack.cards();
             Card pickedCard;
             QJsonArray remainingCards;
 
             for (const Card &card : cards) {
-                if (card.getId() == cardId) {
+                if (card.id() == cardId) {
                     pickedCard = card;
                 } else {
-                    QJsonObject cardObj = QJsonDocument::fromJson(card.toJson()).object();
+                    QJsonObject cardObj = card.toJson();
                     remainingCards.append(cardObj);
                 }
             }
@@ -179,7 +179,7 @@ void DraftManager::pickCard(const QString &draftId,
             QJsonObject updateData;
             updateData["cards"] = remainingCards;
 
-            QString packFilter = QString("id=eq.%1").arg(pack.getId());
+            QString packFilter = QString("id=eq.%1").arg(pack.id());
             this->m_client->update("draft_packs", updateData, packFilter,
                 [this, draftId, playerSeat, pickedCard, callback]
                 (const QJsonObject &data, const QString &updateError) {
@@ -195,19 +195,19 @@ void DraftManager::pickCard(const QString &draftId,
                                 return;
                             }
 
-                            QVector<Card> poolCards = pool.getCards();
+                            QVector<Card> poolCards = pool.cards();
                             poolCards.append(pickedCard);
 
                             QJsonArray cardsArray;
                             for (const Card &card : poolCards) {
-                                QJsonObject cardObj = QJsonDocument::fromJson(card.toJson()).object();
+                                QJsonObject cardObj = card.toJson();
                                 cardsArray.append(cardObj);
                             }
 
                             QJsonObject poolUpdate;
                             poolUpdate["cards"] = cardsArray;
 
-                            QString poolFilter = QString("id=eq.%1").arg(pool.getId());
+                            QString poolFilter = QString("id=eq.%1").arg(pool.id());
                             this->m_client->update("player_pools", poolUpdate, poolFilter,
                                 [callback](const QJsonObject &poolData, const QString &poolUpdateError) {
                                     if (!poolUpdateError.isEmpty()) {
@@ -266,9 +266,9 @@ void DraftManager::advanceRound(const QString &draftId,
         updatedDraft.advanceRound();
 
         QJsonObject updateData;
-        updateData["current_round"] = updatedDraft.getCurrentRound();
-        updateData["current_pick"] = updatedDraft.getCurrentPick();
-        updateData["direction"] = updatedDraft.getDirection();
+        updateData["current_round"] = updatedDraft.currentRound();
+        updateData["current_pick"] = updatedDraft.currentPick();
+        updateData["direction"] = updatedDraft.direction();
 
         QString filter = QString("id=eq.%1").arg(draftId);
         this->m_client->update("drafts", updateData, filter,
@@ -306,38 +306,17 @@ void DraftManager::completeDraft(const QString &draftId,
 
 Draft DraftManager::parseDraft(const QJsonObject &data)
 {
-    Draft draft;
-
-    QJsonDocument doc(data);
-    if (!draft.fromJson(doc.toJson())) {
-        qWarning() << "Failed to parse draft:" << data;
-    }
-
-    return draft;
+    return Draft::fromJson(data);
 }
 
 DraftPack DraftManager::parsePack(const QJsonObject &data)
 {
-    DraftPack pack;
-
-    QJsonDocument doc(data);
-    if (!pack.fromJson(doc.toJson())) {
-        qWarning() << "Failed to parse pack:" << data;
-    }
-
-    return pack;
+    return DraftPack::fromJson(data);
 }
 
 PlayerPool DraftManager::parsePool(const QJsonObject &data)
 {
-    PlayerPool pool;
-
-    QJsonDocument doc(data);
-    if (!pool.fromJson(doc.toJson())) {
-        qWarning() << "Failed to parse pool:" << data;
-    }
-
-    return pool;
+    return PlayerPool::fromJson(data);
 }
 
 QVector<DraftPack> DraftManager::parsePacks(const QJsonArray &data)
