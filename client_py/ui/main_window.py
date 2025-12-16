@@ -277,6 +277,19 @@ class MainWindow(QMainWindow):
         booster_widget = QWidget()
         layout = QVBoxLayout(booster_widget)
 
+        # Selection du set
+        from PySide6.QtWidgets import QComboBox
+        top_layout = QHBoxLayout()
+        set_label = QLabel("Extension:")
+        self.booster_set_combo = QComboBox()
+        for set_info in self.available_sets:
+            self.booster_set_combo.addItem(f"{set_info['name']} ({set_info['code'].upper()})", set_info['code'])
+        if self.booster_set_combo.count() == 0:
+            self.booster_set_combo.addItem("Bloomburrow (BLB)", "blb")
+        top_layout.addWidget(set_label)
+        top_layout.addWidget(self.booster_set_combo, stretch=1)
+        top_layout.addStretch(2)
+
         # bouton générer
         self.btn_generate = QPushButton("Générer un Play Booster")
         self.btn_generate.clicked.connect(self.generate_booster)
@@ -294,6 +307,7 @@ class MainWindow(QMainWindow):
         self.thumb_height = 120
         self.images_widget.setStyleSheet("background: #f5f5f5;")
 
+        layout.addLayout(top_layout)
         layout.addWidget(self.btn_generate)
         layout.addWidget(self.booster_list)
         layout.addWidget(self.images_widget)
@@ -380,8 +394,11 @@ class MainWindow(QMainWindow):
                 QMessageBox.warning(self, "Erreur", "Supabase non configuré")
                 return
 
-            # Récupère toutes les cartes avec set_code par défaut (blb)
-            all_cards_response = supabase.table("cards").select("name, rarity, mana_cost, colors, type_line, set_code").eq("set_code", "blb").execute()
+            # Récupère le set sélectionné
+            selected_set = self.booster_set_combo.currentData() or "blb"
+
+            # Récupère toutes les cartes avec le set sélectionné
+            all_cards_response = supabase.table("cards").select("name, rarity, mana_cost, colors, type_line, set_code").eq("set_code", selected_set).execute()
             all_cards = all_cards_response.data
 
             if not all_cards:
@@ -582,6 +599,18 @@ class MainWindow(QMainWindow):
         left_panel = QWidget()
         left_layout = QVBoxLayout(left_panel)
 
+        # Selection du set pour le draft
+        from PySide6.QtWidgets import QComboBox
+        set_selection_layout = QHBoxLayout()
+        set_selection_label = QLabel("Extension:")
+        self.draft_set_combo = QComboBox()
+        for set_info in self.available_sets:
+            self.draft_set_combo.addItem(f"{set_info['name']} ({set_info['code'].upper()})", set_info['code'])
+        if self.draft_set_combo.count() == 0:
+            self.draft_set_combo.addItem("Bloomburrow (BLB)", "blb")
+        set_selection_layout.addWidget(set_selection_label)
+        set_selection_layout.addWidget(self.draft_set_combo, stretch=1)
+
         self.btn_start_draft = QPushButton("Démarrer un Draft (8 joueurs)")
         self.btn_start_draft.clicked.connect(self.start_draft)
 
@@ -595,6 +624,7 @@ class MainWindow(QMainWindow):
         self.current_pack_layout.setSpacing(8)
         self.current_pack_area.setWidget(self.current_pack_widget)
 
+        left_layout.addLayout(set_selection_layout)
         left_layout.addWidget(self.btn_start_draft)
         left_layout.addWidget(self.draft_info_label)
         left_layout.addWidget(QLabel("Booster actuel:"))
@@ -638,8 +668,11 @@ class MainWindow(QMainWindow):
             if not supabase:
                 return []
 
-            # Récupère toutes les cartes (set par défaut: blb)
-            all_cards = supabase.table("cards").select("name, rarity, mana_cost, colors").eq("set_code", "blb").execute()
+            # Récupère le set sélectionné
+            selected_set = self.draft_set_combo.currentData() or "blb"
+
+            # Récupère toutes les cartes du set sélectionné
+            all_cards = supabase.table("cards").select("name, rarity, mana_cost, colors").eq("set_code", selected_set).execute()
 
             if not all_cards.data:
                 return []
