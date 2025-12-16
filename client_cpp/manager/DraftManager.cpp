@@ -18,19 +18,18 @@ void DraftManager::getDraft(const QString &draftId,
 {
     QString filter = QString("id=eq.%1").arg(draftId);
 
-    m_client->select("drafts", filter, [this, callback](bool success, const QJsonValue &data, const QString &error) {
-        if (!success) {
+    m_client->select("drafts", "*", filter, [this, callback](const QJsonArray &data, const QString &error) {
+        if (!error.isEmpty()) {
             callback(Draft(), error);
             return;
         }
 
-        QJsonArray array = data.toArray();
-        if (array.isEmpty()) {
+        if (data.isEmpty()) {
             callback(Draft(), "Draft not found");
             return;
         }
 
-        Draft draft = parseDraft(array.first().toObject());
+        Draft draft = parseDraft(data.first().toObject());
         callback(draft, "");
     });
 }
@@ -47,7 +46,8 @@ void DraftManager::initializePacks(const QString &draftId,
         }
 
         const int cardsPerPack = 15;
-        QVector<QJsonObject> packsToInsert;
+        int successCount = 0;
+        int totalPacks = playerCount * 3;
 
         for (int playerSeat = 0; playerSeat < playerCount; ++playerSeat) {
             for (int round = 1; round <= 3; ++round) {
@@ -59,22 +59,26 @@ void DraftManager::initializePacks(const QString &draftId,
 
                 QJsonArray cardsArray;
                 for (int i = 0; i < cardsPerPack && i < availableCards.size(); ++i) {
-                    const Card& card = availableCards[i + (playerSeat * cardsPerPack * 3) + ((round - 1) * cardsPerPack)];
-                    cardsArray.append(QJsonDocument(card.toJson()).toJson(QJsonDocument::Compact));
+                    int cardIndex = i + (playerSeat * cardsPerPack * 3) + ((round - 1) * cardsPerPack);
+                    if (cardIndex < availableCards.size()) {
+                        const Card& card = availableCards[cardIndex];
+                        cardsArray.append(card.toJson());
+                    }
                 }
                 packData["cards"] = cardsArray;
 
-                packsToInsert.append(packData);
+                m_client->insert("draft_packs", packData, [callback, &successCount, totalPacks](const QJsonObject &data, const QString &error) {
+                    if (!error.isEmpty()) {
+                        callback(false, error);
+                        return;
+                    }
+                    successCount++;
+                    if (successCount == totalPacks) {
+                        callback(true, "");
+                    }
+                });
             }
         }
-
-        QJsonDocument doc(QJsonArray::fromVariantList(
-            QVariant(packsToInsert).toList()
-        ));
-
-        m_client->insert("draft_packs", doc.object(), [callback](bool success, const QJsonValue &data, const QString &error) {
-            callback(success, error);
-        });
     });
 }
 
@@ -93,19 +97,18 @@ void DraftManager::getCurrentPack(const QString &draftId,
             .arg(playerSeat)
             .arg(draft.currentRound());
 
-        m_client->select("draft_packs", filter, [this, callback](bool success, const QJsonValue &data, const QString &error) {
-            if (!success) {
+        m_client->select("draft_packs", "*", filter, [this, callback](const QJsonArray &data, const QString &error) {
+            if (!error.isEmpty()) {
                 callback(DraftPack(), error);
                 return;
             }
 
-            QJsonArray array = data.toArray();
-            if (array.isEmpty()) {
+            if (data.isEmpty()) {
                 callback(DraftPack(), "No pack available");
                 return;
             }
 
-            DraftPack pack = parsePack(array.first().toObject());
+            DraftPack pack = parsePack(data.first().toObject());
             callback(pack, "");
         });
     });
@@ -130,7 +133,7 @@ void DraftManager::pickCard(const QString &draftId,
             if (card.id() == cardId) {
                 pickedCard = card;
             } else {
-                updatedCards.append(QJsonDocument(card.toJson()).toJson(QJsonDocument::Compact));
+                updatedCards.append(card.toJson());
             }
         }
 
@@ -144,8 +147,8 @@ void DraftManager::pickCard(const QString &draftId,
 
         QString packFilter = QString("id=eq.%1").arg(pack.id());
 
-        m_client->update("draft_packs", packFilter, packUpdate, [this, draftId, playerSeat, pickedCard, callback](bool success, const QJsonValue &data, const QString &error) {
-            if (!success) {
+        m_client->update("draft_packs", packUpdate, packFilter, [this, draftId, playerSeat, pickedCard, callback](const QJsonObject &data, const QString &error) {
+            if (!error.isEmpty()) {
                 callback(false, error);
                 return;
             }
@@ -161,7 +164,7 @@ void DraftManager::pickCard(const QString &draftId,
 
                 QJsonArray cardsArray;
                 for (const Card& card : poolCards) {
-                    cardsArray.append(QJsonDocument(card.toJson()).toJson(QJsonDocument::Compact));
+                    cardsArray.append(card.toJson());
                 }
 
                 QJsonObject poolUpdate;
@@ -169,8 +172,8 @@ void DraftManager::pickCard(const QString &draftId,
 
                 QString poolFilter = QString("id=eq.%1").arg(pool.id());
 
-                m_client->update("player_pools", poolFilter, poolUpdate, [callback](bool success, const QJsonValue &data, const QString &error) {
-                    callback(success, error);
+                m_client->update("player_pools", poolUpdate, poolFilter, [callback](const QJsonObject &data, const QString &error) {
+                    callback(error.isEmpty(), error);
                 });
             });
         });
@@ -185,38 +188,31 @@ void DraftManager::getPlayerPool(const QString &draftId,
         .arg(draftId)
         .arg(playerSeat);
 
-    m_client->select("player_pools", filter, [this, draftId, playerSeat, callback](bool success, const QJsonValue &data, const QString &error) {
-        if (!success) {
+    m_client->select("player_pools", "*", filter, [this, draftId, playerSeat, callback](const QJsonArray &data, const QString &error) {
+        if (!error.isEmpty()) {
             callback(PlayerPool(), error);
             return;
         }
 
-        QJsonArray array = data.toArray();
-        if (array.isEmpty()) {
+        if (data.isEmpty()) {
             QJsonObject poolData;
             poolData["draft_id"] = draftId;
             poolData["player_seat"] = playerSeat;
             poolData["cards"] = QJsonArray();
 
-            m_client->insert("player_pools", poolData, [this, callback](bool success, const QJsonValue &data, const QString &error) {
-                if (!success) {
+            m_client->insert("player_pools", poolData, [this, callback](const QJsonObject &data, const QString &error) {
+                if (!error.isEmpty()) {
                     callback(PlayerPool(), error);
                     return;
                 }
 
-                QJsonArray array = data.toArray();
-                if (array.isEmpty()) {
-                    callback(PlayerPool(), "Failed to create pool");
-                    return;
-                }
-
-                PlayerPool pool = parsePool(array.first().toObject());
+                PlayerPool pool = parsePool(data);
                 callback(pool, "");
             });
             return;
         }
 
-        PlayerPool pool = parsePool(array.first().toObject());
+        PlayerPool pool = parsePool(data.first().toObject());
         callback(pool, "");
     });
 }
@@ -240,8 +236,8 @@ void DraftManager::advanceRound(const QString &draftId,
 
         QString filter = QString("id=eq.%1").arg(draftId);
 
-        m_client->update("drafts", filter, updateData, [callback](bool success, const QJsonValue &data, const QString &error) {
-            callback(success, error);
+        m_client->update("drafts", updateData, filter, [callback](const QJsonObject &data, const QString &error) {
+            callback(error.isEmpty(), error);
         });
     });
 }
@@ -255,8 +251,8 @@ void DraftManager::completeDraft(const QString &draftId,
 
     QString filter = QString("id=eq.%1").arg(draftId);
 
-    m_client->update("drafts", filter, updateData, [callback](bool success, const QJsonValue &data, const QString &error) {
-        callback(success, error);
+    m_client->update("drafts", updateData, filter, [callback](const QJsonObject &data, const QString &error) {
+        callback(error.isEmpty(), error);
     });
 }
 
@@ -268,20 +264,19 @@ void DraftManager::rotatePacks(const QString &draftId,
         .arg(draftId)
         .arg(draft.currentRound());
 
-    m_client->select("draft_packs", filter, [this, draftId, draft, callback](bool success, const QJsonValue &data, const QString &error) {
-        if (!success) {
+    m_client->select("draft_packs", "*", filter, [this, callback](const QJsonArray &data, const QString &error) {
+        if (!error.isEmpty()) {
             callback(false, error);
             return;
         }
 
-        QVector<DraftPack> packs = parsePacks(data.toArray());
+        QVector<DraftPack> packs = parsePacks(data);
         callback(true, "");
     });
 }
 
 Draft DraftManager::parseDraft(const QJsonObject &data)
 {
-    QJsonDocument doc(data);
     Draft draft = Draft::fromJson(data);
     if (!draft.isValid()) {
         qWarning() << "Failed to parse draft from JSON";
@@ -291,7 +286,6 @@ Draft DraftManager::parseDraft(const QJsonObject &data)
 
 DraftPack DraftManager::parsePack(const QJsonObject &data)
 {
-    QJsonDocument doc(data);
     DraftPack pack = DraftPack::fromJson(data);
     if (!pack.isValid()) {
         qWarning() << "Failed to parse pack from JSON";
@@ -301,7 +295,6 @@ DraftPack DraftManager::parsePack(const QJsonObject &data)
 
 PlayerPool DraftManager::parsePool(const QJsonObject &data)
 {
-    QJsonDocument doc(data);
     PlayerPool pool = PlayerPool::fromJson(data);
     if (!pool.isValid()) {
         qWarning() << "Failed to parse pool from JSON";
