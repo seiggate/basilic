@@ -31,7 +31,7 @@ echo.
 echo Build complete!
 echo.
 echo Run the application with:
-echo   cd build\Release
+echo   cd build
 echo   Basilic.exe
 
 cd ..
