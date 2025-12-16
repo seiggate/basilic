@@ -181,24 +181,10 @@ QVector<Card> DatabaseManager::parseCards(const QJsonArray &data)
 
 Set DatabaseManager::parseSet(const QJsonObject &data)
 {
-    Set set;
-
-    QJsonDocument doc(data);
-    if (!set.fromJson(doc.toJson())) {
-        qWarning() << "Failed to parse set:" << data;
-    }
-
-    return set;
+    return Set::fromJson(data);
 }
 
 Card DatabaseManager::parseCard(const QJsonObject &data)
 {
-    Card card;
-
-    QJsonDocument doc(data);
-    if (!card.fromJson(doc.toJson())) {
-        qWarning() << "Failed to parse card:" << data;
-    }
-
-    return card;
+    return Card::fromJson(data);
 }
