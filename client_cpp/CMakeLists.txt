@@ -60,14 +60,10 @@ set(MANAGER_HEADERS
 # Source files - UI layer
 set(UI_SOURCES
     ui/MainWindow.cpp
-    ui/RoundTableWidget.cpp
-    ui/CardWidget.cpp
 )
 
 set(UI_HEADERS
     ui/MainWindow.h
-    ui/RoundTableWidget.h
-    ui/CardWidget.h
 )
 
 set(UI_FORMS
@@ -90,9 +86,9 @@ add_executable(${PROJECT_NAME}
     ${MODEL_HEADERS}
     ${MANAGER_SOURCES}
     ${MANAGER_HEADERS}
-    # ${UI_SOURCES}
-    # ${UI_HEADERS}
-    # ${UI_FORMS}
+    ${UI_SOURCES}
+    ${UI_HEADERS}
+    ${UI_FORMS}
     ${UTILS_SOURCES}
     ${UTILS_HEADERS}
 )
