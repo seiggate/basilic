@@ -140,23 +140,35 @@ class MainWindow(QMainWindow):
         self.tabs = QTabWidget()
         self.setCentralWidget(self.tabs)
 
-        # Initialize Supabase and state BEFORE setting up tabs
+        # Initialize state BEFORE setting up tabs
         self.draft_state = None
         self.lobby_state = None
         self.current_lobby_id = None
         self.current_player_id = None
         self.available_sets = []
-        self.supabase = get_supabase_client()
-        self.lobby_refresh_timer = QTimer()
-        self.lobby_refresh_timer.timeout.connect(self.refresh_lobbies)
-        self.lobby_refresh_timer.start(3000)
 
-        self.cleanup_timer = QTimer()
-        self.cleanup_timer.timeout.connect(self.cleanup_abandoned_lobbies)
-        self.cleanup_timer.start(300000)
+        # Try to connect to Supabase, but don't fail if it's not available
+        try:
+            self.supabase = get_supabase_client()
+            if self.supabase:
+                print("✅ Connected to Supabase")
+                self.lobby_refresh_timer = QTimer()
+                self.lobby_refresh_timer.timeout.connect(self.refresh_lobbies)
+                self.lobby_refresh_timer.start(3000)
 
-        # Load available sets from Supabase
-        self.load_available_sets()
+                self.cleanup_timer = QTimer()
+                self.cleanup_timer.timeout.connect(self.cleanup_abandoned_lobbies)
+                self.cleanup_timer.start(300000)
+
+                # Load available sets from Supabase
+                self.load_available_sets()
+            else:
+                print("⚠️ Supabase non configuré")
+                self.supabase = None
+        except Exception as e:
+            print(f"⚠️ Supabase non disponible: {e}")
+            print("ℹ️  Fonctionnement en mode local uniquement")
+            self.supabase = None
 
         # setup tabs AFTER Supabase initialization
         self._setup_library_tab()
