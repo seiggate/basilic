@@ -257,7 +257,7 @@ QVector<LobbyPlayer> LobbyManager::parsePlayers(const QJsonArray &data)
     for (const QJsonValue &value : data) {
         if (value.isObject()) {
             LobbyPlayer player = LobbyPlayer::fromJson(value.toObject());
-            if (!player.playerId().isEmpty()) {
+            if (player.isValid()) {
                 players.append(player);
             }
         }
