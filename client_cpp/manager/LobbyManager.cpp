@@ -94,10 +94,10 @@ void LobbyManager::joinLobby(const QString &lobbyCode,
             return;
         }
 
-        int nextSeat = lobby.getPlayerCount();
+        int nextSeat = lobby.currentPlayerCount();
 
         QJsonObject playerData;
-        playerData["lobby_id"] = lobby.getId();
+        playerData["lobby_id"] = lobby.id();
         playerData["player_name"] = playerName;
         playerData["is_creator"] = false;
         playerData["seat_position"] = nextSeat;
@@ -109,7 +109,7 @@ void LobbyManager::joinLobby(const QString &lobbyCode,
                     return;
                 }
 
-                this->getLobby(lobby.getCode(), callback);
+                this->getLobby(lobby.code(), callback);
             });
     });
 }
@@ -234,14 +234,7 @@ void LobbyManager::startDraft(const QString &lobbyId,
 
 Lobby LobbyManager::parseLobby(const QJsonObject &data)
 {
-    Lobby lobby;
-
-    QJsonDocument doc(data);
-    if (!lobby.fromJson(doc.toJson())) {
-        qWarning() << "Failed to parse lobby:" << data;
-    }
-
-    return lobby;
+    return Lobby::fromJson(data);
 }
 
 QVector<Lobby> LobbyManager::parseLobbies(const QJsonArray &data)
@@ -263,9 +256,8 @@ QVector<LobbyPlayer> LobbyManager::parsePlayers(const QJsonArray &data)
     QVector<LobbyPlayer> players;
     for (const QJsonValue &value : data) {
         if (value.isObject()) {
-            LobbyPlayer player;
-            QJsonDocument doc(value.toObject());
-            if (player.fromJson(doc.toJson())) {
+            LobbyPlayer player = LobbyPlayer::fromJson(value.toObject());
+            if (!player.playerId().isEmpty()) {
                 players.append(player);
             }
         }
