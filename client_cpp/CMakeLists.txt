@@ -198,6 +198,7 @@ target_include_directories(test_managers PRIVATE
 target_link_libraries(test_managers PRIVATE
     Qt6::Core
     Qt6::Network
+    Qt6::Gui
 )
 
 # Copy .env file to build directory
